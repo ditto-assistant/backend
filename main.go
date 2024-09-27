@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 
@@ -21,12 +22,22 @@ func main() {
 	}); err != nil {
 		log.Fatal(err)
 	}
-	// Define an auth policy and create a Firebase auth provider
+	type PromptRequest struct {
+		UserID         string `json:"userID"`
+		UserPrompt     string `json:"userPrompt"`
+		SystemPrompt   string `json:"systemPrompt"`
+		Model          string `json:"model,omitempty"`
+		ImageURL       string `json:"imageURL,omitempty"`
+		UsersOpenaiKey string `json:"usersOpenaiKey,omitempty"`
+	}
 	firebaseAuth, err := firebase.NewAuth(ctx, func(authContext genkit.AuthContext, input any) error {
 		// The type must match the input type of the flow.
-		userID := input.(string)
-		if authContext == nil || authContext["UID"] != userID {
-			return errors.New("user ID does not match")
+		if in, ok := input.(PromptRequest); !ok {
+			return fmt.Errorf("user ID type is incorrect: %T", input)
+		} else {
+			if authContext == nil || authContext["UID"] != in.UserID {
+				return errors.New("user ID does not match")
+			}
 		}
 		return nil
 	}, true)
@@ -34,13 +45,6 @@ func main() {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
 
-	type PromptRequest struct {
-		UserPrompt     string `json:"userPrompt"`
-		SystemPrompt   string `json:"systemPrompt"`
-		Model          string `json:"model,omitempty"`
-		ImageURL       string `json:"imageURL,omitempty"`
-		UsersOpenaiKey string `json:"usersOpenaiKey,omitempty"`
-	}
 	genkit.DefineFlow("v1/prompt",
 		func(ctx context.Context, input PromptRequest) (string, error) {
 			m := vertexai.Model("gemini-1.5-flash")
