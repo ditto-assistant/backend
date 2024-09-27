@@ -2,7 +2,10 @@ module github.com/ditto-assistant/backend
 
 go 1.23.1
 
-require github.com/firebase/genkit/go v0.1.1
+require (
+	github.com/firebase/genkit/go v0.1.1
+	github.com/rs/cors v1.11.1
+)
 
 require (
 	cloud.google.com/go v0.115.0 // indirect

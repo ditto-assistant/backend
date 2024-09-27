@@ -4,14 +4,13 @@ import (
 	"context"
 	"errors"
 	"log"
+	"net/http"
 
-	// Import the Genkit core libraries.
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
-
-	// Import the Google Cloud Vertex AI plugin.
 	"github.com/firebase/genkit/go/plugins/firebase"
 	"github.com/firebase/genkit/go/plugins/vertexai"
+	"github.com/rs/cors"
 )
 
 func main() {
@@ -70,9 +69,21 @@ func main() {
 		genkit.WithFlowAuth(firebaseAuth),
 	)
 
-	if err := genkit.Init(ctx,
-		&genkit.Options{FlowAddr: ":3400"},
-	); err != nil {
-		log.Fatal(err)
+	mux := genkit.NewFlowServeMux(nil)
+	corsMiddleware := cors.New(cors.Options{
+		AllowedOrigins: []string{"https://assistant.heyditto.ai"}, // Allow all origins
+		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"*"}, // Allow all headers
+		MaxAge:         86400,         // 24 hours
+	})
+	handler := corsMiddleware.Handler(mux)
+	server := &http.Server{
+		Addr:    ":3400",
+		Handler: handler,
+	}
+
+	// TODO: Handle graceful shutdown
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("Server error: %v", err)
 	}
 }
