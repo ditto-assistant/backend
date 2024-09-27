@@ -65,7 +65,12 @@ func main() {
 					ai.NewSystemTextMessage(input.SystemPrompt),
 					ai.NewUserTextMessage(input.UserPrompt),
 				),
-				func(ctx context.Context, grc *ai.GenerateResponseChunk) error { return callback(ctx, grc.Text()) },
+				func(ctx context.Context, grc *ai.GenerateResponseChunk) error {
+					if callback == nil {
+						return nil
+					}
+					return callback(ctx, grc.Text())
+				},
 			)
 			if err != nil {
 				return "", err
