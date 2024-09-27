@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 
 	// Import the Genkit core libraries.
@@ -11,51 +10,59 @@ import (
 	"github.com/firebase/genkit/go/genkit"
 
 	// Import the Google Cloud Vertex AI plugin.
+	"github.com/firebase/genkit/go/plugins/firebase"
 	"github.com/firebase/genkit/go/plugins/vertexai"
 )
 
 func main() {
 	ctx := context.Background()
-
-	// Initialize the Vertex AI plugin. When you pass an empty string for the
-	// projectID parameter, the Vertex AI plugin will use the value from the
-	// GCLOUD_PROJECT environment variable. When you pass an empty string for
-	// the location parameter, the plugin uses the default value, us-central1.
-	if err := vertexai.Init(ctx, nil); err != nil {
+	if err := vertexai.Init(ctx, &vertexai.Config{
+		ProjectID: "ditto-app-dev",
+		Location:  "us-central1",
+	}); err != nil {
 		log.Fatal(err)
 	}
-
-	// Define a simple flow that prompts an LLM to generate menu suggestions.
-	genkit.DefineFlow("menu", func(ctx context.Context, input string) (string, error) {
-		// The Vertex AI API provides access to several generative models. Here,
-		// we specify gemini-1.5-flash.
-		m := vertexai.Model("gemini-1.5-flash")
-		if m == nil {
-			return "", errors.New("menuSuggestionFlow: failed to find model")
+	// Define an auth policy and create a Firebase auth provider
+	firebaseAuth, err := firebase.NewAuth(ctx, func(authContext genkit.AuthContext, input any) error {
+		// The type must match the input type of the flow.
+		userID := input.(string)
+		if authContext == nil || authContext["UID"] != userID {
+			return errors.New("user ID does not match")
 		}
+		return nil
+	}, true)
+	if err != nil {
+		log.Fatalf("failed to set up Firebase auth: %v", err)
+	}
 
-		// Construct a request and send it to the model API.
-		resp, err := m.Generate(ctx,
-			ai.NewGenerateRequest(
-				&ai.GenerationCommonConfig{Temperature: 1},
-				ai.NewUserTextMessage(fmt.Sprintf(`Suggest an item for the menu of a %s themed restaurant`, input))),
-			nil)
-		if err != nil {
-			return "", err
-		}
+	genkit.DefineStreamingFlow("v1/prompt",
+		func(ctx context.Context, input string,
+			callback func(context.Context, string) error) (string, error) {
+			m := vertexai.Model("gemini-1.5-flash")
+			if m == nil {
+				return "", errors.New("promptFlow: failed to find model")
+			}
 
-		// Handle the response from the model API. In this sample, we just
-		// convert it to a string, but more complicated flows might coerce the
-		// response into structured output or chain the response into another
-		// LLM call, etc.
-		text := resp.Text()
-		return text, nil
-	})
+			resp, err := m.Generate(ctx,
+				ai.NewGenerateRequest(
+					&ai.GenerationCommonConfig{Temperature: 0.5},
+					ai.NewUserTextMessage(input),
+				),
+				func(ctx context.Context, grc *ai.GenerateResponseChunk) error {
+					if callback != nil {
+						return callback(ctx, grc.Text())
+					}
+					return nil
+				})
+			if err != nil {
+				return "", err
+			}
 
-	// Initialize Genkit and start a flow server. This call must come last,
-	// after all of your plug-in configuration and flow definitions. When you
-	// pass a nil configuration to Init, Genkit starts a local flow server,
-	// which you can interact with using the developer UI.
+			return resp.Text(), nil
+		},
+		genkit.WithFlowAuth(firebaseAuth),
+	)
+
 	if err := genkit.Init(ctx,
 		&genkit.Options{FlowAddr: ":3400"},
 	); err != nil {
