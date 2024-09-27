@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"mime"
 	"net/http"
 
 	"github.com/firebase/genkit/go/ai"
@@ -65,7 +64,6 @@ func main() {
 					&ai.GenerationCommonConfig{Temperature: 0.5},
 					ai.NewSystemTextMessage(input.SystemPrompt),
 					ai.NewUserTextMessage(input.UserPrompt),
-					ai.NewUserMessage(ai.NewMediaPart(mime.TypeByExtension("png"), "")),
 				),
 				func(ctx context.Context, grc *ai.GenerateResponseChunk) error { return callback(ctx, grc.Text()) },
 			)
