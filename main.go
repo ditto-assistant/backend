@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"mime"
 	"net/http"
 
 	"github.com/firebase/genkit/go/ai"
@@ -31,13 +32,21 @@ func main() {
 		UsersOpenaiKey string `json:"usersOpenaiKey,omitempty"`
 	}
 	firebaseAuth, err := firebase.NewAuth(ctx, func(authContext genkit.AuthContext, input any) error {
-		// The type must match the input type of the flow.
-		if in, ok := input.(PromptRequest); !ok {
-			return fmt.Errorf("user ID type is incorrect: %T", input)
-		} else {
-			if authContext == nil || authContext["UID"] != in.UserID {
-				return errors.New("user ID does not match")
-			}
+		in, ok := input.(PromptRequest) // The type must match the input type of the flow.
+		if !ok {
+			return fmt.Errorf("request body type is incorrect: %T", input)
+		}
+		if len(authContext) == 0 {
+			return fmt.Errorf("authContext is empty; input uid: %s", in.UserID)
+		}
+		uid, ok := authContext["uid"]
+		if !ok {
+			return fmt.Errorf("authContext missing uid: %v", authContext)
+		}
+		if uid, ok := uid.(string); !ok {
+			return fmt.Errorf("authContext uid is not a string: %v", uid)
+		} else if uid != in.UserID {
+			return fmt.Errorf("user ID does not match: authContext uid: %v != input uid: %s", uid, in.UserID)
 		}
 		return nil
 	}, true)
@@ -45,25 +54,24 @@ func main() {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
 
-	genkit.DefineFlow("v1/prompt",
-		func(ctx context.Context, input PromptRequest) (string, error) {
+	genkit.DefineStreamingFlow("v1/prompt",
+		func(ctx context.Context, input PromptRequest, callback func(context.Context, string) error) (string, error) {
 			m := vertexai.Model("gemini-1.5-flash")
 			if m == nil {
 				return "", errors.New("promptFlow: failed to find model")
 			}
-
 			resp, err := m.Generate(ctx,
 				ai.NewGenerateRequest(
 					&ai.GenerationCommonConfig{Temperature: 0.5},
 					ai.NewSystemTextMessage(input.SystemPrompt),
 					ai.NewUserTextMessage(input.UserPrompt),
+					ai.NewUserMessage(ai.NewMediaPart(mime.TypeByExtension("png"), "")),
 				),
-				nil,
+				func(ctx context.Context, grc *ai.GenerateResponseChunk) error { return callback(ctx, grc.Text()) },
 			)
 			if err != nil {
 				return "", err
 			}
-
 			return resp.Text(), nil
 		},
 		genkit.WithFlowAuth(firebaseAuth),
