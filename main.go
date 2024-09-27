@@ -41,8 +41,8 @@ func main() {
 		ImageURL       string `json:"imageURL,omitempty"`
 		UsersOpenaiKey string `json:"usersOpenaiKey,omitempty"`
 	}
-	genkit.DefineStreamingFlow("v1/prompt",
-		func(ctx context.Context, input PromptRequest, callback func(context.Context, string) error) (string, error) {
+	genkit.DefineFlow("v1/prompt",
+		func(ctx context.Context, input PromptRequest) (string, error) {
 			m := vertexai.Model("gemini-1.5-flash")
 			if m == nil {
 				return "", errors.New("promptFlow: failed to find model")
@@ -54,12 +54,8 @@ func main() {
 					ai.NewSystemTextMessage(input.SystemPrompt),
 					ai.NewUserTextMessage(input.UserPrompt),
 				),
-				func(ctx context.Context, grc *ai.GenerateResponseChunk) error {
-					if callback != nil {
-						return callback(ctx, grc.Text())
-					}
-					return nil
-				})
+				nil,
+			)
 			if err != nil {
 				return "", err
 			}
@@ -71,7 +67,7 @@ func main() {
 
 	mux := genkit.NewFlowServeMux(nil)
 	corsMiddleware := cors.New(cors.Options{
-		AllowedOrigins: []string{"https://assistant.heyditto.ai"}, // Allow all origins
+		AllowedOrigins: []string{"http://localhost:3000", "https://assistant.heyditto.ai"}, // Allow all origins
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders: []string{"*"}, // Allow all headers
 		MaxAge:         86400,         // 24 hours
