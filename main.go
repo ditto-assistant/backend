@@ -35,9 +35,15 @@ func main() {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
 
+	type PromptRequest struct {
+		UserPrompt     string `json:"userPrompt"`
+		SystemPrompt   string `json:"systemPrompt"`
+		Model          string `json:"model,omitempty"`
+		ImageURL       string `json:"imageURL,omitempty"`
+		UsersOpenaiKey string `json:"usersOpenaiKey,omitempty"`
+	}
 	genkit.DefineStreamingFlow("v1/prompt",
-		func(ctx context.Context, input string,
-			callback func(context.Context, string) error) (string, error) {
+		func(ctx context.Context, input PromptRequest, callback func(context.Context, string) error) (string, error) {
 			m := vertexai.Model("gemini-1.5-flash")
 			if m == nil {
 				return "", errors.New("promptFlow: failed to find model")
@@ -46,7 +52,8 @@ func main() {
 			resp, err := m.Generate(ctx,
 				ai.NewGenerateRequest(
 					&ai.GenerationCommonConfig{Temperature: 0.5},
-					ai.NewUserTextMessage(input),
+					ai.NewSystemTextMessage(input.SystemPrompt),
+					ai.NewUserTextMessage(input.UserPrompt),
 				),
 				func(ctx context.Context, grc *ai.GenerateResponseChunk) error {
 					if callback != nil {
