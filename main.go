@@ -94,7 +94,7 @@ func main() {
 				ai.NewUserTextMessage(in.UserPrompt),
 			}
 			if in.ImageURL != "" {
-				imgPart, err := img.NewPart(in.ImageURL)
+				imgPart, err := img.NewPart(ctx, in.ImageURL)
 				if err != nil {
 					return "", err
 				}
