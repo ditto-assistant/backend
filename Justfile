@@ -9,3 +9,6 @@ deploy:
 		--set-env-vars GCLOUD_PROJECT=ditto-app-dev \
 		--set-env-vars GCLOUD_LOCATION=us-central1 \
 		--source . \
+
+kill:
+	lsof -i :3400 | grep LISTEN | awk '{print $2}' | xargs kill

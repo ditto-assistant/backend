@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -11,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/ditto-assistant/backend/pkg/img"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/firebase"
@@ -80,17 +80,29 @@ func main() {
 
 	// genkit.DefineStreamingFlow("v2/chat")
 	genkit.DefineStreamingFlow("v1/prompt",
-		func(ctx context.Context, input PromptRequestV1, callback func(context.Context, string) error) (string, error) {
-			m := vertexai.Model("gemini-1.5-pro")
-			if m == nil {
-				return "", errors.New("promptFlow: failed to find model")
+		func(ctx context.Context, in PromptRequestV1, callback func(context.Context, string) error) (string, error) {
+			if in.Model != "" {
+				if !vertexai.IsDefinedModel(in.Model) {
+					return "", fmt.Errorf("promptFlow: model not found: %s", in.Model)
+				}
+			} else {
+				in.Model = "gemini-1.5-pro"
 			}
+			m := vertexai.Model(in.Model)
+			messages := []*ai.Message{
+				ai.NewSystemTextMessage(in.SystemPrompt),
+				ai.NewUserTextMessage(in.UserPrompt),
+			}
+			if in.ImageURL != "" {
+				imgPart, err := img.NewPart(ctx, in.ImageURL)
+				if err != nil {
+					return "", err
+				}
+				messages = append(messages, ai.NewUserMessage(imgPart))
+			}
+			cfg := &ai.GenerationCommonConfig{Temperature: 0.5}
 			resp, err := m.Generate(ctx,
-				ai.NewGenerateRequest(
-					&ai.GenerationCommonConfig{Temperature: 0.5},
-					ai.NewSystemTextMessage(input.SystemPrompt),
-					ai.NewUserTextMessage(input.UserPrompt),
-				),
+				ai.NewGenerateRequest(cfg, messages...),
 				func(ctx context.Context, grc *ai.GenerateResponseChunk) error {
 					if callback == nil {
 						return nil
@@ -106,13 +118,20 @@ func main() {
 		genkit.WithFlowAuth(firebaseAuth),
 	)
 
-	mux := genkit.NewFlowServeMux(nil)
+	go func() {
+		err := genkit.Init(ctx, &genkit.Options{FlowAddr: "-"})
+		if err != nil {
+			log.Fatalf("failed to initialize genkit: %v", err)
+		}
+	}()
+
 	corsMiddleware := cors.New(cors.Options{
 		AllowedOrigins: []string{"http://localhost:3000", "https://assistant.heyditto.ai"}, // Allow all origins
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders: []string{"*"}, // Allow all headers
 		MaxAge:         86400,         // 24 hours
 	})
+	mux := genkit.NewFlowServeMux(nil)
 	handler := corsMiddleware.Handler(mux)
 	server := &http.Server{
 		Addr:    ":3400",
@@ -127,7 +146,9 @@ func main() {
 		}
 	}()
 
+	slog.Debug("Starting server", "addr", server.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
+	os.Exit(0)
 }
