@@ -11,35 +11,13 @@ import (
 	"syscall"
 
 	"github.com/ditto-assistant/backend/pkg/img"
+	"github.com/ditto-assistant/backend/pkg/rq"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/firebase"
 	"github.com/firebase/genkit/go/plugins/vertexai"
 	"github.com/rs/cors"
 )
-
-type HasUserID interface {
-	GetUserID() string
-}
-
-var _, _ HasUserID = ChatRequestV2{}, PromptRequestV1{}
-
-type ChatRequestV2 struct {
-	UserID string `json:"userID"`
-}
-
-func (c ChatRequestV2) GetUserID() string { return c.UserID }
-
-type PromptRequestV1 struct {
-	UserID         string `json:"userID"`
-	UserPrompt     string `json:"userPrompt"`
-	SystemPrompt   string `json:"systemPrompt"`
-	Model          string `json:"model,omitempty"`
-	ImageURL       string `json:"imageURL,omitempty"`
-	UsersOpenaiKey string `json:"usersOpenaiKey,omitempty"`
-}
-
-func (p PromptRequestV1) GetUserID() string { return p.UserID }
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -55,7 +33,7 @@ func main() {
 	}
 
 	firebaseAuth, err := firebase.NewAuth(ctx, func(authContext genkit.AuthContext, input any) error {
-		in, ok := input.(HasUserID) // The type must match the input type of the flow.
+		in, ok := input.(rq.HasUserID) // The type must match the input type of the flow.
 		if !ok {
 			return fmt.Errorf("request body type is incorrect: %T", input)
 		}
@@ -80,7 +58,7 @@ func main() {
 
 	// genkit.DefineStreamingFlow("v2/chat")
 	genkit.DefineStreamingFlow("v1/prompt",
-		func(ctx context.Context, in PromptRequestV1, callback func(context.Context, string) error) (string, error) {
+		func(ctx context.Context, in rq.PromptV1, callback func(context.Context, string) error) (string, error) {
 			if in.Model != "" {
 				if !vertexai.IsDefinedModel(in.Model) {
 					return "", fmt.Errorf("promptFlow: model not found: %s", in.Model)
