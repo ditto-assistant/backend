@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -80,17 +79,30 @@ func main() {
 
 	// genkit.DefineStreamingFlow("v2/chat")
 	genkit.DefineStreamingFlow("v1/prompt",
-		func(ctx context.Context, input PromptRequestV1, callback func(context.Context, string) error) (string, error) {
-			m := vertexai.Model("gemini-1.5-pro")
-			if m == nil {
-				return "", errors.New("promptFlow: failed to find model")
+		func(ctx context.Context, in PromptRequestV1, callback func(context.Context, string) error) (string, error) {
+			if in.Model != "" {
+				if !vertexai.IsDefinedModel(in.Model) {
+					return "", fmt.Errorf("promptFlow: model not found: %s", in.Model)
+				}
+			} else {
+				in.Model = "gemini-1.5-pro"
 			}
+			m := vertexai.Model(in.Model)
+			messages := []*ai.Message{
+				ai.NewSystemTextMessage(in.SystemPrompt),
+				ai.NewUserTextMessage(in.UserPrompt),
+			}
+			// slog.Debug("file", "url", in.ImageURL)
+			// if in.ImageURL != "" {
+			// 	ext := mime.TypeByExtension(".jpg")
+			// 	slog.Debug("ext", "ext", ext)
+			// 	messages = append(messages,
+			// 		ai.NewUserMessage(ai.NewMediaPart(ext, in.ImageURL)),
+			// 	)
+			// }
+			cfg := &ai.GenerationCommonConfig{Temperature: 0.5}
 			resp, err := m.Generate(ctx,
-				ai.NewGenerateRequest(
-					&ai.GenerationCommonConfig{Temperature: 0.5},
-					ai.NewSystemTextMessage(input.SystemPrompt),
-					ai.NewUserTextMessage(input.UserPrompt),
-				),
+				ai.NewGenerateRequest(cfg, messages...),
 				func(ctx context.Context, grc *ai.GenerateResponseChunk) error {
 					if callback == nil {
 						return nil
@@ -106,6 +118,10 @@ func main() {
 		genkit.WithFlowAuth(firebaseAuth),
 	)
 
+	err = genkit.Init(ctx, &genkit.Options{FlowAddr: "-"})
+	if err != nil {
+		log.Fatalf("failed to initialize genkit: %v", err)
+	}
 	mux := genkit.NewFlowServeMux(nil)
 	corsMiddleware := cors.New(cors.Options{
 		AllowedOrigins: []string{"http://localhost:3000", "https://assistant.heyditto.ai"}, // Allow all origins
@@ -130,4 +146,5 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
+	os.Exit(0)
 }
