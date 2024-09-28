@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/ditto-assistant/backend/pkg/img"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/firebase"
@@ -92,14 +93,13 @@ func main() {
 				ai.NewSystemTextMessage(in.SystemPrompt),
 				ai.NewUserTextMessage(in.UserPrompt),
 			}
-			// slog.Debug("file", "url", in.ImageURL)
-			// if in.ImageURL != "" {
-			// 	ext := mime.TypeByExtension(".jpg")
-			// 	slog.Debug("ext", "ext", ext)
-			// 	messages = append(messages,
-			// 		ai.NewUserMessage(ai.NewMediaPart(ext, in.ImageURL)),
-			// 	)
-			// }
+			if in.ImageURL != "" {
+				imgPart, err := img.NewPart(in.ImageURL)
+				if err != nil {
+					return "", err
+				}
+				messages = append(messages, ai.NewUserMessage(imgPart))
+			}
 			cfg := &ai.GenerationCommonConfig{Temperature: 0.5}
 			resp, err := m.Generate(ctx,
 				ai.NewGenerateRequest(cfg, messages...),
@@ -118,17 +118,20 @@ func main() {
 		genkit.WithFlowAuth(firebaseAuth),
 	)
 
-	err = genkit.Init(ctx, &genkit.Options{FlowAddr: "-"})
-	if err != nil {
-		log.Fatalf("failed to initialize genkit: %v", err)
-	}
-	mux := genkit.NewFlowServeMux(nil)
+	go func() {
+		err := genkit.Init(ctx, &genkit.Options{FlowAddr: "-"})
+		if err != nil {
+			log.Fatalf("failed to initialize genkit: %v", err)
+		}
+	}()
+
 	corsMiddleware := cors.New(cors.Options{
 		AllowedOrigins: []string{"http://localhost:3000", "https://assistant.heyditto.ai"}, // Allow all origins
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders: []string{"*"}, // Allow all headers
 		MaxAge:         86400,         // 24 hours
 	})
+	mux := genkit.NewFlowServeMux(nil)
 	handler := corsMiddleware.Handler(mux)
 	server := &http.Server{
 		Addr:    ":3400",
@@ -143,6 +146,7 @@ func main() {
 		}
 	}()
 
+	slog.Debug("Starting server", "addr", server.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
