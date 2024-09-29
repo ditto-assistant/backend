@@ -30,3 +30,11 @@ type SearchV1 struct {
 }
 
 func (s SearchV1) GetUserID() string { return s.UserID }
+
+type EmbedV1 struct {
+	UserID string `json:"userID"`
+	Text   string `json:"text"`
+	Model  string `json:"model"`
+}
+
+func (e EmbedV1) GetUserID() string { return e.UserID }

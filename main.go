@@ -117,6 +117,51 @@ func main() {
 	})
 	mux := genkit.NewFlowServeMux(nil)
 
+	mux.HandleFunc("POST /v1/embed", func(w http.ResponseWriter, r *http.Request) {
+		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var bod rq.EmbedV1
+		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		err = firebaseAuth.CheckAuthPolicy(ctx, bod)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		if bod.Model != "" {
+			if !vertexai.IsDefinedEmbedder(bod.Model) {
+				http.Error(w, fmt.Sprintf("embedFlow: model not found: %s", bod.Model), http.StatusBadRequest)
+				return
+			}
+		} else {
+			bod.Model = "text-embedding-004"
+		}
+		embedder := vertexai.Embedder(bod.Model)
+		embeddings, err := embedder.Embed(ctx, &ai.EmbedRequest{
+			Documents: []*ai.Document{
+				{
+					Content: []*ai.Part{
+						ai.NewTextPart(bod.Text),
+					},
+				},
+			},
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if len(embeddings.Embeddings) == 0 {
+			http.Error(w, "no embeddings returned", http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(embeddings.Embeddings[0].Embedding)
+	})
+
 	apiKey, err := os.ReadFile("SEARCH_API_KEY")
 	if err != nil {
 		log.Fatalf("failed to read SEARCH_API_KEY: %s", err)
@@ -125,7 +170,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to initialize custom search: %s", err)
 	}
-
 	mux.HandleFunc("POST /v1/google-search", func(w http.ResponseWriter, r *http.Request) {
 		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
 		if err != nil {
@@ -160,7 +204,6 @@ func main() {
 		}
 		w.Write([]byte{'\n', '\n'})
 		for i, item := range ser.Items {
-			slog.Debug("search item", "title", item.Title, "link", item.Link)
 			fmt.Fprintf(w,
 				"%d. [%s](%s)\n\t- %s\n\n",
 				i+1, item.Title, item.Link, item.Snippet,
