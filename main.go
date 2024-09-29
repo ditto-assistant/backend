@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"os/signal"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/ditto-assistant/backend/pkg/img"
 	"github.com/ditto-assistant/backend/pkg/rq"
@@ -62,30 +64,6 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
-
-	// genkit.DefineStreamingFlow("v2/chat")
-	genkit.DefineFlow("v1/generate-image",
-		func(ctx context.Context, in rq.GenerateImageV1) (string, error) {
-			if in.Model != "" {
-				if !vertexai.IsDefinedModel(in.Model) {
-					return "", fmt.Errorf("generateImageFlow: model not found: %s", in.Model)
-				}
-			} else {
-				in.Model = "gemini-1.5-pro"
-			}
-			m := vertexai.Model(in.Model)
-			messages := []*ai.Message{
-				ai.NewUserTextMessage(in.Prompt),
-			}
-			cfg := &ai.GenerationCommonConfig{Temperature: 0.5}
-			resp, err := m.Generate(ctx, ai.NewGenerateRequest(cfg, messages...), nil)
-			if err != nil {
-				return "", err
-			}
-			return resp.Text(), nil
-		},
-		genkit.WithFlowAuth(firebaseAuth),
-	)
 
 	genkit.DefineStreamingFlow("v1/prompt",
 		func(ctx context.Context, in rq.PromptV1, callback func(context.Context, string) error) (string, error) {
@@ -239,6 +217,89 @@ func main() {
 				i+1, item.Title, item.Link, item.Snippet,
 			)
 		}
+	})
+
+	dalleKey, err := secr.GetString("OPENAI_DALLE_API_KEY")
+	if err != nil {
+		log.Fatalf("failed to read OPENAI_DALLE_API_KEY: %s", err)
+	}
+	dalleClient := &http.Client{
+		Timeout: 20 * time.Second,
+	}
+	mux.HandleFunc("POST /v1/generate-image", func(w http.ResponseWriter, r *http.Request) {
+		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var bod rq.GenerateImageV1
+		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		err = firebaseAuth.CheckAuthPolicy(ctx, bod)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		if bod.Model == "" {
+			bod.Model = "dall-e-3"
+		}
+		type RequestImageOpenAI struct {
+			Prompt string `json:"prompt"`
+			Model  string `json:"model"`
+			N      int    `json:"n"`
+			Size   string `json:"size"`
+		}
+		var buf bytes.Buffer
+		if err := json.NewEncoder(&buf).Encode(RequestImageOpenAI{
+			Prompt: bod.Prompt,
+			Model:  bod.Model,
+			N:      1,
+			Size:   "1024x1024",
+		}); err != nil {
+			slog.Error("failed to encode image request", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/images/generations", &buf)
+		if err != nil {
+			slog.Error("failed to create image request", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+dalleKey)
+		resp, err := dalleClient.Do(req)
+		if err != nil {
+			slog.Error("failed to send image request", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			slog.Error("failed to generate image", "status", resp.Status, "status code", resp.StatusCode)
+			http.Error(w, fmt.Sprintf("failed to generate image: %s", resp.Status), resp.StatusCode)
+			return
+		}
+		var respBody struct {
+			Data []struct {
+				URL string `json:"url"`
+			} `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+			slog.Error("failed to decode image response", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if len(respBody.Data) == 0 {
+			slog.Error("no image URL returned")
+			http.Error(w, "no image URL returned", http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintln(w, respBody.Data[0].URL)
+		slog.Debug("generated image", "url", respBody.Data[0].URL)
 	})
 
 	handler := corsMiddleware.Handler(mux)
