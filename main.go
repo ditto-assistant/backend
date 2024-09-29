@@ -148,6 +148,7 @@ func main() {
 			googleapi.QueryParameter("q", bod.Query),
 			googleapi.QueryParameter("num", strconv.Itoa(bod.NumResults)),
 			googleapi.QueryParameter("cx", os.Getenv("SEARCH_ENGINE_ID")),
+			googleapi.QueryParameter("key", os.Getenv("SEARCH_API_KEY")),
 		)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -177,7 +178,11 @@ func main() {
 		}
 	}()
 
-	slog.Debug("Starting server", "addr", server.Addr)
+	wd, err := os.Getwd()
+	if err != nil {
+		slog.Error("Failed to get working directory", "error", err)
+	}
+	slog.Debug("Starting server", "addr", server.Addr, "cwd", wd)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
