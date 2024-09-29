@@ -22,6 +22,7 @@ import (
 	"github.com/rs/cors"
 	"google.golang.org/api/customsearch/v1"
 	"google.golang.org/api/googleapi"
+	"google.golang.org/api/option"
 )
 
 func main() {
@@ -116,7 +117,11 @@ func main() {
 	})
 	mux := genkit.NewFlowServeMux(nil)
 
-	customSearch, err := customsearch.NewService(ctx)
+	apiKey, err := os.ReadFile("SEARCH_API_KEY")
+	if err != nil {
+		log.Fatalf("failed to read SEARCH_API_KEY: %s", err)
+	}
+	customSearch, err := customsearch.NewService(ctx, option.WithAPIKey(string(apiKey)))
 	if err != nil {
 		log.Fatalf("failed to initialize custom search: %s", err)
 	}
@@ -148,7 +153,6 @@ func main() {
 			googleapi.QueryParameter("q", bod.Query),
 			googleapi.QueryParameter("num", strconv.Itoa(bod.NumResults)),
 			googleapi.QueryParameter("cx", os.Getenv("SEARCH_ENGINE_ID")),
-			googleapi.QueryParameter("key", os.Getenv("SEARCH_API_KEY")),
 		)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
