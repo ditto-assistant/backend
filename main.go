@@ -15,6 +15,7 @@ import (
 
 	"github.com/ditto-assistant/backend/pkg/img"
 	"github.com/ditto-assistant/backend/pkg/rq"
+	"github.com/ditto-assistant/backend/pkg/secr"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/firebase"
@@ -63,6 +64,29 @@ func main() {
 	}
 
 	// genkit.DefineStreamingFlow("v2/chat")
+	genkit.DefineFlow("v1/generate-image",
+		func(ctx context.Context, in rq.GenerateImageV1) (string, error) {
+			if in.Model != "" {
+				if !vertexai.IsDefinedModel(in.Model) {
+					return "", fmt.Errorf("generateImageFlow: model not found: %s", in.Model)
+				}
+			} else {
+				in.Model = "gemini-1.5-pro"
+			}
+			m := vertexai.Model(in.Model)
+			messages := []*ai.Message{
+				ai.NewUserTextMessage(in.Prompt),
+			}
+			cfg := &ai.GenerationCommonConfig{Temperature: 0.5}
+			resp, err := m.Generate(ctx, ai.NewGenerateRequest(cfg, messages...), nil)
+			if err != nil {
+				return "", err
+			}
+			return resp.Text(), nil
+		},
+		genkit.WithFlowAuth(firebaseAuth),
+	)
+
 	genkit.DefineStreamingFlow("v1/prompt",
 		func(ctx context.Context, in rq.PromptV1, callback func(context.Context, string) error) (string, error) {
 			if in.Model != "" {
@@ -163,11 +187,11 @@ func main() {
 	})
 
 	// The container workdir is /workspace
-	apiKey, err := os.ReadFile("SEARCH_API_KEY")
+	apiKey, err := secr.GetString("SEARCH_API_KEY")
 	if err != nil {
 		log.Fatalf("failed to read SEARCH_API_KEY: %s", err)
 	}
-	customSearch, err := customsearch.NewService(ctx, option.WithAPIKey(string(apiKey)))
+	customSearch, err := customsearch.NewService(ctx, option.WithAPIKey(apiKey))
 	if err != nil {
 		log.Fatalf("failed to initialize custom search: %s", err)
 	}

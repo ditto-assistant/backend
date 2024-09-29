@@ -38,3 +38,11 @@ type EmbedV1 struct {
 }
 
 func (e EmbedV1) GetUserID() string { return e.UserID }
+
+type GenerateImageV1 struct {
+	UserID string `json:"userID"`
+	Prompt string `json:"prompt"`
+	Model  string `json:"model"`
+}
+
+func (g GenerateImageV1) GetUserID() string { return g.UserID }
