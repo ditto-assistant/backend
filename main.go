@@ -147,7 +147,7 @@ func main() {
 		ser, err := customSearch.Cse.List().Do(
 			googleapi.QueryParameter("q", bod.Query),
 			googleapi.QueryParameter("num", strconv.Itoa(bod.NumResults)),
-			googleapi.QueryParameter("cx", "f218df4dacc78457d"),
+			googleapi.QueryParameter("cx", os.Getenv("SEARCH_ENGINE_ID")),
 		)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
