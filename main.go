@@ -203,6 +203,11 @@ func main() {
 			return
 		}
 		w.Write([]byte{'\n', '\n'})
+		if len(ser.Items) == 0 {
+			slog.Warn("no search results found", "query", bod.Query)
+			fmt.Fprintln(w, "No results found")
+			return
+		}
 		for i, item := range ser.Items {
 			fmt.Fprintf(w,
 				"%d. [%s](%s)\n\t- %s\n\n",
