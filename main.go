@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 
 	"github.com/ditto-assistant/backend/pkg/img"
@@ -17,6 +20,8 @@ import (
 	"github.com/firebase/genkit/go/plugins/firebase"
 	"github.com/firebase/genkit/go/plugins/vertexai"
 	"github.com/rs/cors"
+	"google.golang.org/api/customsearch/v1"
+	"google.golang.org/api/googleapi"
 )
 
 func main() {
@@ -110,6 +115,54 @@ func main() {
 		MaxAge:         86400,         // 24 hours
 	})
 	mux := genkit.NewFlowServeMux(nil)
+
+	customSearch, err := customsearch.NewService(ctx)
+	if err != nil {
+		log.Fatalf("failed to initialize custom search: %s", err)
+	}
+
+	mux.HandleFunc("POST /v1/google-search", func(w http.ResponseWriter, r *http.Request) {
+		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var bod rq.SearchV1
+		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+			if err == io.EOF {
+				http.Error(w, "request body is empty", http.StatusBadRequest)
+			} else {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+			}
+			return
+		}
+		err = firebaseAuth.CheckAuthPolicy(ctx, bod)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		if bod.NumResults == 0 {
+			bod.NumResults = 5
+		}
+		ser, err := customSearch.Cse.List().Do(
+			googleapi.QueryParameter("q", bod.Query),
+			googleapi.QueryParameter("num", strconv.Itoa(bod.NumResults)),
+			googleapi.QueryParameter("cx", "f218df4dacc78457d"),
+		)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Write([]byte{'\n', '\n'})
+		for i, item := range ser.Items {
+			slog.Debug("search item", "title", item.Title, "link", item.Link)
+			fmt.Fprintf(w,
+				"%d. [%s](%s)\n\t- %s\n\n",
+				i+1, item.Title, item.Link, item.Snippet,
+			)
+		}
+	})
+
 	handler := corsMiddleware.Handler(mux)
 	server := &http.Server{
 		Addr:    ":3400",
