@@ -6,7 +6,7 @@ import (
 )
 
 func GetString(key string) (string, error) {
-	val, err := os.ReadFile(filepath.Join("secrets", key))
+	val, err := os.ReadFile(filepath.Join("secrets", key, "latest"))
 	if err != nil {
 		return "", err
 	}
@@ -14,7 +14,7 @@ func GetString(key string) (string, error) {
 }
 
 func GetBytes(key string) ([]byte, error) {
-	val, err := os.ReadFile(filepath.Join("secrets", key))
+	val, err := os.ReadFile(filepath.Join("secrets", key, "latest"))
 	if err != nil {
 		return nil, err
 	}
