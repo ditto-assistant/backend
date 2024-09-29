@@ -162,6 +162,7 @@ func main() {
 		json.NewEncoder(w).Encode(embeddings.Embeddings[0].Embedding)
 	})
 
+	// The container workdir is /workspace
 	apiKey, err := os.ReadFile("SEARCH_API_KEY")
 	if err != nil {
 		log.Fatalf("failed to read SEARCH_API_KEY: %s", err)
@@ -230,11 +231,7 @@ func main() {
 		}
 	}()
 
-	wd, err := os.Getwd()
-	if err != nil {
-		slog.Error("Failed to get working directory", "error", err)
-	}
-	slog.Debug("Starting server", "addr", server.Addr, "cwd", wd)
+	slog.Debug("Starting server", "addr", server.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
