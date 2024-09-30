@@ -1,22 +1,43 @@
 package secr
 
 import (
-	"os"
-	"path/filepath"
+	"context"
+	"log/slog"
+
+	"google.golang.org/api/secretmanager/v1"
 )
 
-func GetString(key string) (string, error) {
-	val, err := os.ReadFile(filepath.Join("secrets", key, "latest"))
-	if err != nil {
-		return "", err
-	}
-	return string(val), nil
-}
+var (
+	BRAVE_SEARCH_API_KEY string
+	SEARCH_API_KEY       string
+	OPENAI_DALLE_API_KEY string
+)
 
-func GetBytes(key string) ([]byte, error) {
-	val, err := os.ReadFile(filepath.Join("secrets", key, "latest"))
+func Setup(ctx context.Context) error {
+	sm, err := secretmanager.NewService(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return val, nil
+	braveSearch, err := sm.Projects.Secrets.Versions.
+		Access("projects/22790208601/secrets/BRAVE_SEARCH_API_KEY/versions/latest").Do()
+	if err != nil {
+		return err
+	}
+	BRAVE_SEARCH_API_KEY = braveSearch.Payload.Data
+
+	search, err := sm.Projects.Secrets.Versions.
+		Access("projects/22790208601/secrets/SEARCH_API_KEY/versions/latest").Do()
+	if err != nil {
+		return err
+	}
+	SEARCH_API_KEY = search.Payload.Data
+
+	openaiDalle, err := sm.Projects.Secrets.Versions.
+		Access("projects/22790208601/secrets/OPENAI_DALLE_API_KEY/versions/latest").Do()
+	if err != nil {
+		return err
+	}
+	OPENAI_DALLE_API_KEY = openaiDalle.Payload.Data
+	slog.Debug("loaded secrets", "ids", []string{braveSearch.Name, search.Name, openaiDalle.Name})
+	return nil
 }

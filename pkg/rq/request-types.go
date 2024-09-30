@@ -4,8 +4,6 @@ type HasUserID interface {
 	GetUserID() string
 }
 
-var _, _ HasUserID = ChatV2{}, PromptV1{}
-
 type ChatV2 struct {
 	UserID string `json:"userID"`
 }

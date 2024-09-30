@@ -40,6 +40,9 @@ func main() {
 	}); err != nil {
 		log.Fatal(err)
 	}
+	if err := secr.Setup(ctx); err != nil {
+		log.Fatalf("failed to initialize secrets: %s", err)
+	}
 
 	firebaseAuth, err := firebase.NewAuth(ctx, func(authContext genkit.AuthContext, input any) error {
 		in, ok := input.(rq.HasUserID) // The type must match the input type of the flow.
@@ -165,11 +168,8 @@ func main() {
 	})
 
 	// The container workdir is /workspace
-	apiKey, err := secr.GetString("SEARCH_API_KEY")
-	if err != nil {
-		log.Fatalf("failed to read SEARCH_API_KEY: %s", err)
-	}
-	customSearch, err := customsearch.NewService(ctx, option.WithAPIKey(apiKey))
+
+	customSearch, err := customsearch.NewService(ctx, option.WithAPIKey(secr.SEARCH_API_KEY))
 	if err != nil {
 		log.Fatalf("failed to initialize custom search: %s", err)
 	}
@@ -219,10 +219,6 @@ func main() {
 		}
 	})
 
-	dalleKey, err := secr.GetString("OPENAI_DALLE_API_KEY")
-	if err != nil {
-		log.Fatalf("failed to read OPENAI_DALLE_API_KEY: %s", err)
-	}
 	dalleClient := &http.Client{
 		Timeout: 20 * time.Second,
 	}
@@ -270,7 +266,7 @@ func main() {
 		}
 
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+dalleKey)
+		req.Header.Set("Authorization", "Bearer "+secr.OPENAI_DALLE_API_KEY)
 		resp, err := dalleClient.Do(req)
 		if err != nil {
 			slog.Error("failed to send image request", "error", err)
