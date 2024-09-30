@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 
 	"golang.org/x/sync/errgroup"
@@ -15,6 +16,7 @@ var (
 	BRAVE_SEARCH_API_KEY string
 	SEARCH_API_KEY       string
 	OPENAI_DALLE_API_KEY string
+	PROJECT_ID           string
 )
 
 func fetchSecret(
@@ -26,7 +28,9 @@ func fetchSecret(
 ) {
 	group.Go(func() error {
 		var sb strings.Builder
-		sb.WriteString("projects/22790208601/secrets/")
+		sb.WriteString("projects/")
+		sb.WriteString(PROJECT_ID)
+		sb.WriteString("/secrets/")
 		sb.WriteString(secName)
 		sb.WriteString("/versions/latest")
 		sid := sb.String()
@@ -48,6 +52,11 @@ func Setup(ctx context.Context) error {
 	sm, err := secretmanager.NewService(ctx)
 	if err != nil {
 		return err
+	}
+	var ok bool
+	PROJECT_ID, ok = os.LookupEnv("PROJECT_ID")
+	if !ok {
+		return fmt.Errorf("PROJECT_ID not set")
 	}
 	group, ctx := errgroup.WithContext(ctx)
 	fetchSecret(ctx, sm, "BRAVE_SEARCH_API_KEY", &BRAVE_SEARCH_API_KEY, group)
