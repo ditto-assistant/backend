@@ -5,6 +5,8 @@ go 1.23.1
 require (
 	github.com/firebase/genkit/go v0.1.1
 	github.com/rs/cors v1.11.1
+	github.com/tursodatabase/go-libsql v0.0.0-20240916111504-922dfa87e1e6
+	golang.org/x/sync v0.8.0
 	google.golang.org/api v0.199.0
 )
 
@@ -53,7 +55,6 @@ require (
 	golang.org/x/exp v0.0.0-20240318143956-a85f2c67cd81 // indirect
 	golang.org/x/net v0.29.0 // indirect
 	golang.org/x/oauth2 v0.23.0 // indirect
-	golang.org/x/sync v0.8.0 // indirect
 	golang.org/x/sys v0.25.0 // indirect
 	golang.org/x/text v0.18.0 // indirect
 	golang.org/x/time v0.6.0 // indirect

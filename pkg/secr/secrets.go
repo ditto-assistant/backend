@@ -7,14 +7,18 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/ditto-assistant/backend/pkg/envs"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/secretmanager/v1"
 )
 
+// Secrets
 var (
-	BRAVE_SEARCH_API_KEY string
-	SEARCH_API_KEY       string
-	OPENAI_DALLE_API_KEY string
+	BRAVE_SEARCH_API_KEY            string
+	SEARCH_API_KEY                  string
+	OPENAI_DALLE_API_KEY            string
+	TURSO_AUTH_TOKEN_DITTO_EXAMPLES string
+	LIBSQL_ENCRYPTION_KEY           string
 )
 
 func fetchSecret(
@@ -26,7 +30,9 @@ func fetchSecret(
 ) {
 	group.Go(func() error {
 		var sb strings.Builder
-		sb.WriteString("projects/22790208601/secrets/")
+		sb.WriteString("projects/")
+		sb.WriteString(envs.PROJECT_ID)
+		sb.WriteString("/secrets/")
 		sb.WriteString(secName)
 		sb.WriteString("/versions/latest")
 		sid := sb.String()
@@ -49,10 +55,15 @@ func Setup(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := envs.Load(); err != nil {
+		return err
+	}
 	group, ctx := errgroup.WithContext(ctx)
 	fetchSecret(ctx, sm, "BRAVE_SEARCH_API_KEY", &BRAVE_SEARCH_API_KEY, group)
 	fetchSecret(ctx, sm, "SEARCH_API_KEY", &SEARCH_API_KEY, group)
 	fetchSecret(ctx, sm, "OPENAI_DALLE_API_KEY", &OPENAI_DALLE_API_KEY, group)
+	fetchSecret(ctx, sm, "TURSO_AUTH_TOKEN_DITTO_EXAMPLES", &TURSO_AUTH_TOKEN_DITTO_EXAMPLES, group)
+	fetchSecret(ctx, sm, "LIBSQL_ENCRYPTION_KEY", &LIBSQL_ENCRYPTION_KEY, group)
 	if err := group.Wait(); err != nil {
 		return err
 	}

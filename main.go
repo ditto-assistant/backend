@@ -12,9 +12,11 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/img"
 	"github.com/ditto-assistant/backend/pkg/rq"
 	"github.com/ditto-assistant/backend/pkg/secr"
@@ -31,6 +33,7 @@ import (
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	var shutdown sync.WaitGroup
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGINT)
 
@@ -42,6 +45,9 @@ func main() {
 	}
 	if err := secr.Setup(ctx); err != nil {
 		log.Fatalf("failed to initialize secrets: %s", err)
+	}
+	if err := db.Setup(ctx, &shutdown); err != nil {
+		log.Fatalf("failed to initialize database: %s", err)
 	}
 
 	firebaseAuth, err := firebase.NewAuth(ctx, func(authContext genkit.AuthContext, input any) error {
@@ -316,5 +322,7 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
+	cancel()
+	shutdown.Wait()
 	os.Exit(0)
 }
