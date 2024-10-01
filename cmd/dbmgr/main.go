@@ -8,6 +8,7 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/ditto-assistant/backend/pkg/db"
@@ -24,6 +25,21 @@ var (
 	folder string
 	mode   Mode
 )
+
+func ingestPromptExamples(_ context.Context, folder string) error {
+	files, err := filepath.Glob(filepath.Join(folder, "*.json"))
+	if err != nil {
+		return fmt.Errorf("error reading folder: %w", err)
+	}
+	for _, file := range files {
+		contents, err := os.ReadFile(file)
+		if err != nil {
+			return fmt.Errorf("error reading file: %w", err)
+		}
+		slog.Debug("ingesting file", "file", file, "contents", string(contents))
+	}
+	return nil
+}
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
@@ -53,6 +69,9 @@ func main() {
 	}
 	switch mode {
 	case ModeIngest:
+		if err := ingestPromptExamples(ctx, folder); err != nil {
+			log.Fatalf("failed to ingest prompt examples: %s", err)
+		}
 	}
 	cancel()
 	shutdown.Wait()
