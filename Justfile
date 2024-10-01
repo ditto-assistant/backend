@@ -15,3 +15,6 @@ kill:
 
 db *ARGS:
 	go run cmd/dbmgr/main.go {{ARGS}}
+
+search *ARGS:
+	go run cmd/dbmgr/main.go search {{ARGS}}
