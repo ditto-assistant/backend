@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -14,6 +15,18 @@ import (
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/secr"
 )
+
+type ToolExample struct {
+	Name        string    `json:"name"`
+	Version     string    `json:"version"`
+	Description string    `json:"description"`
+	Examples    []Example `json:"examples"`
+}
+
+type Example struct {
+	Prompt   string `json:"prompt"`
+	Response string `json:"response"`
+}
 
 type Mode int
 
@@ -32,11 +45,15 @@ func ingestPromptExamples(_ context.Context, folder string) error {
 		return fmt.Errorf("error reading folder: %w", err)
 	}
 	for _, file := range files {
-		contents, err := os.ReadFile(file)
+		file, err := os.Open(file)
 		if err != nil {
+			return fmt.Errorf("error opening file: %w", err)
+		}
+		var contents ToolExample
+		if err := json.NewDecoder(file).Decode(&contents); err != nil {
 			return fmt.Errorf("error reading file: %w", err)
 		}
-		slog.Debug("ingesting file", "file", file, "contents", string(contents))
+		slog.Debug("ingesting file", "file", file, "contents", contents)
 	}
 	return nil
 }
@@ -52,7 +69,7 @@ func main() {
 	if os.Args[1] == "ingest" {
 		mode = ModeIngest
 		fset := flag.NewFlagSet("ingest", flag.ExitOnError)
-		fset.StringVar(&folder, "folder", "cmd/dbmgr/prompt-examples", "folder to ingest")
+		fset.StringVar(&folder, "folder", "cmd/dbmgr/tool-examples", "folder to ingest")
 		fset.Parse(os.Args[2:])
 		slog.Debug("ingest mode", "folder", folder)
 	}
