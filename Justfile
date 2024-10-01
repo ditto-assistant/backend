@@ -12,3 +12,6 @@ deploy:
 
 kill:
 	lsof -i :3400 | grep LISTEN | awk '{print $2}' | xargs kill
+
+db *ARGS:
+	go run cmd/dbmgr/main.go {{ARGS}}
