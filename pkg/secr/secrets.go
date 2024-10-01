@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 
 	"github.com/ditto-assistant/backend/pkg/envs"
