@@ -12,9 +12,11 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/img"
 	"github.com/ditto-assistant/backend/pkg/rq"
 	"github.com/ditto-assistant/backend/pkg/secr"
@@ -31,6 +33,7 @@ import (
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	var shutdown sync.WaitGroup
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGINT)
 
@@ -42,6 +45,9 @@ func main() {
 	}
 	if err := secr.Setup(ctx); err != nil {
 		log.Fatalf("failed to initialize secrets: %s", err)
+	}
+	if err := db.Setup(ctx, &shutdown); err != nil {
+		log.Fatalf("failed to initialize database: %s", err)
 	}
 
 	firebaseAuth, err := firebase.NewAuth(ctx, func(authContext genkit.AuthContext, input any) error {
@@ -350,6 +356,33 @@ func main() {
 		slog.Debug("generated image", "url", respBody.Data[0].URL)
 	})
 
+	mux.HandleFunc("POST /v1/search-examples", func(w http.ResponseWriter, r *http.Request) {
+		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var bod rq.SearchExamplesV1
+		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if bod.K == 0 {
+			bod.K = 5
+		}
+		examples, err := db.SearchExamples(ctx, bod.Embedding, db.WithK(bod.K))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Format response
+		w.Write([]byte{'\n'})
+		for i, example := range examples {
+			fmt.Fprintf(w, "Example %d\n", i+1)
+			fmt.Fprintf(w, "User's Prompt: %s\nDitto:\n%s\n\n", example.Prompt, example.Response)
+		}
+	})
+
 	handler := corsMiddleware.Handler(mux)
 	server := &http.Server{
 		Addr:    ":3400",
@@ -368,5 +401,7 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)
 	}
+	cancel()
+	shutdown.Wait()
 	os.Exit(0)
 }
