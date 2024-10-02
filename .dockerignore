@@ -1,4 +1,8 @@
-cmd/
+cmd
 .env
+.git
 .gitignore
 README.md
+.dockerignore
+Dockerfile
+.github

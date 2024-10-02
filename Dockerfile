@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1.10.0
-FROM golang:1.23-alpine AS builder
-
-# Install dependencies (including gcc)
-RUN apk add --no-cache gcc libc-dev
+FROM golang:1.23-bullseye AS builder
 
 # Set working directory
 WORKDIR /workspace
+
+# Install build dependencies using apt-get instead of apk
+RUN apt-get update && apt-get install -y build-essential
 
 # Copy your Go project code
 COPY . .
@@ -13,11 +13,11 @@ COPY . .
 # Install Go dependencies
 RUN go mod download
 
-# Build your Go application (main is in project root)
-RUN go build -o cmd/backend .
+# Build your Go application
+RUN CGO_ENABLED=1 GOOS=linux CGO_LDFLAGS="-ldl" go build -o cmd/backend .
 
 # Switch to a minimal runtime image
-FROM alpine:latest
+FROM debian:bullseye-slim
 
 # Copy the compiled binary
 COPY --from=builder /workspace/cmd/backend /app/backend
