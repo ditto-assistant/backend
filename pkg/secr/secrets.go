@@ -13,10 +13,11 @@ import (
 )
 
 var (
-	BRAVE_SEARCH_API_KEY string
-	SEARCH_API_KEY       string
-	OPENAI_DALLE_API_KEY string
-	PROJECT_ID           string
+	BRAVE_SEARCH_API_KEY      string
+	SEARCH_API_KEY            string
+	OPENAI_DALLE_API_KEY      string
+	OPENAI_EMBEDDINGS_API_KEY string
+	PROJECT_ID                string
 )
 
 func fetchSecret(
@@ -62,6 +63,7 @@ func Setup(ctx context.Context) error {
 	fetchSecret(ctx, sm, "BRAVE_SEARCH_API_KEY", &BRAVE_SEARCH_API_KEY, group)
 	fetchSecret(ctx, sm, "SEARCH_API_KEY", &SEARCH_API_KEY, group)
 	fetchSecret(ctx, sm, "OPENAI_DALLE_API_KEY", &OPENAI_DALLE_API_KEY, group)
+	fetchSecret(ctx, sm, "OPENAI_EMBEDDINGS_API_KEY", &OPENAI_EMBEDDINGS_API_KEY, group)
 	if err := group.Wait(); err != nil {
 		return err
 	}
