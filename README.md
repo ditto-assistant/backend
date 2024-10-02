@@ -1,1 +1,7 @@
 # backend
+
+## Development
+
+```
+just run
+```
