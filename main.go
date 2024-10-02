@@ -225,8 +225,6 @@ func main() {
 		json.NewEncoder(w).Encode(embeddings.Embeddings[0].Embedding)
 	})
 
-	// The container workdir is /workspace
-
 	customSearch, err := customsearch.NewService(ctx, option.WithAPIKey(secr.SEARCH_API_KEY))
 	if err != nil {
 		log.Fatalf("failed to initialize custom search: %s", err)
