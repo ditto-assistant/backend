@@ -1,5 +1,5 @@
 steps:
-  - name: docker/dockerfile:1.8
+  - name: docker/dockerfile:1.10.0
     args:
       - build
       - .

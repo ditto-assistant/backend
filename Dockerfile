@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1.10.0
 FROM golang:1.23-alpine AS builder
 
 # Install dependencies (including gcc)
