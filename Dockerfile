@@ -19,6 +19,11 @@ RUN CGO_ENABLED=1 GOOS=linux CGO_LDFLAGS="-ldl" go build -o cmd/backend .
 # Switch to a minimal runtime image
 FROM debian:bullseye-slim
 
+# Install only necessary runtime dependencies
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy the compiled binary
 COPY --from=builder /workspace/cmd/backend /app/backend
 
