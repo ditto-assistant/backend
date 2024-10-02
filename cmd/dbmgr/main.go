@@ -344,7 +344,6 @@ func migrate(ctx context.Context) error {
 
 const createExampleStore = `
 CREATE TABLE IF NOT EXISTS migrations (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
   migration_name TEXT,
   migration_date TEXT DEFAULT (datetime('now'))
 );
@@ -354,14 +353,12 @@ WHERE NOT EXISTS (SELECT 1 FROM migrations);
 
 
 CREATE TABLE IF NOT EXISTS tools (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT,
   description TEXT,
   version TEXT
 );
 
 CREATE TABLE IF NOT EXISTS examples (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
   tool_id INTEGER,
   prompt TEXT,
   response TEXT,
