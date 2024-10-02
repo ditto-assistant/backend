@@ -356,6 +356,33 @@ func main() {
 		slog.Debug("generated image", "url", respBody.Data[0].URL)
 	})
 
+	mux.HandleFunc("POST /v1/search-examples", func(w http.ResponseWriter, r *http.Request) {
+		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var bod rq.SearchExamplesV1
+		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if bod.K == 0 {
+			bod.K = 5
+		}
+		examples, err := db.SearchExamples(ctx, bod.Embedding, db.WithK(bod.K))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Format response
+		w.Write([]byte{'\n'})
+		for i, example := range examples {
+			fmt.Fprintf(w, "Example %d\n", i+1)
+			fmt.Fprintf(w, "User's Prompt: %s\nDitto:\n%s\n\n", example.Prompt, example.Response)
+		}
+	})
+
 	handler := corsMiddleware.Handler(mux)
 	server := &http.Server{
 		Addr:    ":3400",

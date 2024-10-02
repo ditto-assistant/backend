@@ -1,10 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -23,80 +21,6 @@ import (
 	"github.com/firebase/genkit/go/plugins/vertexai"
 	"golang.org/x/sync/errgroup"
 )
-
-type ToolExample struct {
-	Name        string    `json:"name"`
-	Version     string    `json:"version"`
-	Description string    `json:"description"`
-	Examples    []Example `json:"examples"`
-}
-
-// EmbedBatch embeds all the examples in the tool example.
-func (te ToolExample) EmbedBatch(ctx context.Context, embedder ai.Embedder) error {
-	docs := make([]*ai.Document, 0, len(te.Examples)*2)
-	for _, example := range te.Examples {
-		// Embed the prompt
-		docs = append(docs, &ai.Document{
-			Content: []*ai.Part{
-				{
-					Kind: ai.PartText,
-					Text: example.Prompt,
-				},
-			},
-			Metadata: map[string]any{
-				"tool_name":   te.Name,
-				"description": te.Description,
-			},
-		})
-		// Embed the prompt and response together
-		docs = append(docs, &ai.Document{
-			Content: []*ai.Part{
-				{
-					Kind: ai.PartText,
-					Text: example.Prompt,
-				},
-				{
-					Kind: ai.PartText,
-					Text: example.Response,
-				},
-			},
-			Metadata: map[string]any{
-				"tool_name":   te.Name,
-				"description": te.Description,
-			},
-		})
-	}
-	rs, err := embedder.Embed(ctx, &ai.EmbedRequest{Documents: docs})
-	if err != nil {
-		return fmt.Errorf("error embedding: %w", err)
-	}
-	for i := range te.Examples {
-		te.Examples[i].EmPrompt = rs.Embeddings[i*2].Embedding
-		te.Examples[i].EmPromptResp = rs.Embeddings[i*2+1].Embedding
-	}
-	return nil
-}
-
-type Embedding []float32
-
-func (e Embedding) Binary() []byte {
-	var buf bytes.Buffer
-	buf.Grow(len(e) * 4)
-	for _, v := range e {
-		err := binary.Write(&buf, binary.LittleEndian, v)
-		if err != nil {
-			log.Fatalf("error converting float32 to bytes: %s", err)
-		}
-	}
-	return buf.Bytes()
-}
-
-type Example struct {
-	Prompt       string    `json:"prompt"`
-	Response     string    `json:"response"`
-	EmPrompt     Embedding `json:"-"`
-	EmPromptResp Embedding `json:"-" db:"type:blob"`
-}
 
 type Mode int
 
@@ -189,24 +113,15 @@ func testSearch(ctx context.Context, query string) error {
 	if err != nil {
 		return fmt.Errorf("error embedding query: %w", err)
 	}
-	emBytes := Embedding(emQuery.Embeddings[0].Embedding).Binary()
-	rows, err := db.D.QueryContext(ctx,
-		"SELECT prompt, response FROM examples ORDER BY vector_distance_cos(em_prompt, ?) LIMIT 5", emBytes)
+	em := db.Embedding(emQuery.Embeddings[0].Embedding)
+	examples, err := db.SearchExamples(ctx, em)
 	if err != nil {
-		return fmt.Errorf("error querying database: %w", err)
+		return fmt.Errorf("error searching examples: %w", err)
 	}
+
 	slog.Info("query results", "query", query)
-	defer rows.Close()
-	for rows.Next() {
-		var example Example
-		err = rows.Scan(&example.Prompt, &example.Response)
-		if err != nil {
-			return fmt.Errorf("error scanning row: %w", err)
-		}
+	for _, example := range examples {
 		slog.Info("example", "prompt", example.Prompt, "response", example.Response)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("error iterating over rows: %w", err)
 	}
 
 	return nil
@@ -303,6 +218,58 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 	return nil
 }
 
+type ToolExample struct {
+	Name        string       `json:"name"`
+	Version     string       `json:"version"`
+	Description string       `json:"description"`
+	Examples    []db.Example `json:"examples"`
+}
+
+// EmbedBatch embeds all the examples in the tool example.
+func (te ToolExample) EmbedBatch(ctx context.Context, embedder ai.Embedder) error {
+	docs := make([]*ai.Document, 0, len(te.Examples)*2)
+	for _, example := range te.Examples {
+		// Embed the prompt
+		docs = append(docs, &ai.Document{
+			Content: []*ai.Part{
+				{
+					Kind: ai.PartText,
+					Text: example.Prompt,
+				},
+			},
+			Metadata: map[string]any{
+				"tool_name":   te.Name,
+				"description": te.Description,
+			},
+		})
+		// Embed the prompt and response together
+		docs = append(docs, &ai.Document{
+			Content: []*ai.Part{
+				{
+					Kind: ai.PartText,
+					Text: example.Prompt,
+				},
+				{
+					Kind: ai.PartText,
+					Text: example.Response,
+				},
+			},
+			Metadata: map[string]any{
+				"tool_name":   te.Name,
+				"description": te.Description,
+			},
+		})
+	}
+	rs, err := embedder.Embed(ctx, &ai.EmbedRequest{Documents: docs})
+	if err != nil {
+		return fmt.Errorf("error embedding: %w", err)
+	}
+	for i := range te.Examples {
+		te.Examples[i].EmPrompt = rs.Embeddings[i*2].Embedding
+		te.Examples[i].EmPromptResp = rs.Embeddings[i*2+1].Embedding
+	}
+	return nil
+}
 func migrate(ctx context.Context) error {
 	// Check if the migrations table exists
 	var tableExists bool

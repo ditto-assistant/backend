@@ -1,5 +1,7 @@
 package rq
 
+import "github.com/ditto-assistant/backend/pkg/db"
+
 type HasUserID interface {
 	GetUserID() string
 }
@@ -44,3 +46,11 @@ type GenerateImageV1 struct {
 }
 
 func (g GenerateImageV1) GetUserID() string { return g.UserID }
+
+type SearchExamplesV1 struct {
+	UserID    string       `json:"userID"`
+	Embedding db.Embedding `json:"embedding"`
+	K         int          `json:"k"`
+}
+
+func (s SearchExamplesV1) GetUserID() string { return s.UserID }
