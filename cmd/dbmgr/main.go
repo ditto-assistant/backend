@@ -33,8 +33,22 @@ type ToolExample struct {
 
 // EmbedBatch embeds all the examples in the tool example.
 func (te ToolExample) EmbedBatch(ctx context.Context, embedder ai.Embedder) error {
-	docs := make([]*ai.Document, 0, len(te.Examples))
+	docs := make([]*ai.Document, 0, len(te.Examples)*2)
 	for _, example := range te.Examples {
+		// Embed the prompt
+		docs = append(docs, &ai.Document{
+			Content: []*ai.Part{
+				{
+					Kind: ai.PartText,
+					Text: example.Prompt,
+				},
+			},
+			Metadata: map[string]any{
+				"tool_name":   te.Name,
+				"description": te.Description,
+			},
+		})
+		// Embed the prompt and response together
 		docs = append(docs, &ai.Document{
 			Content: []*ai.Part{
 				{
@@ -51,42 +65,14 @@ func (te ToolExample) EmbedBatch(ctx context.Context, embedder ai.Embedder) erro
 				"description": te.Description,
 			},
 		})
-		// docs = append(docs, &ai.Document{
-		// 	Content: []*ai.Part{
-		// 		{
-		// 			Kind: ai.PartText,
-		// 			Text: example.Prompt,
-		// 		},
-		// 	},
-		// 	Metadata: map[string]any{
-		// 		"tool_name":   te.Name,
-		// 		"description": te.Description,
-		// 	},
-		// })
-		// docs = append(docs, &ai.Document{
-		// 	Content: []*ai.Part{
-		// 		{
-		// 			Kind: ai.PartText,
-		// 			Text: example.Response,
-		// 		},
-		// 	},
-		// 	Metadata: map[string]any{
-		// 		"tool_name":   te.Name,
-		// 		"description": te.Description,
-		// 	},
-		// })
 	}
-	rs, err := embedder.Embed(ctx, &ai.EmbedRequest{
-		Documents: docs,
-	})
+	rs, err := embedder.Embed(ctx, &ai.EmbedRequest{Documents: docs})
 	if err != nil {
 		return fmt.Errorf("error embedding: %w", err)
 	}
 	for i := range te.Examples {
-		// te.Examples[i].EmPromptResp = rs.Embeddings[i*3].Embedding
-		// te.Examples[i].EmPrompt = rs.Embeddings[i*3+1].Embedding
-		// te.Examples[i].EmResponse = rs.Embeddings[i*3+2].Embedding
-		te.Examples[i].EmPromptResp = rs.Embeddings[i].Embedding
+		te.Examples[i].EmPrompt = rs.Embeddings[i*2].Embedding
+		te.Examples[i].EmPromptResp = rs.Embeddings[i*2+1].Embedding
 	}
 	return nil
 }
@@ -109,7 +95,6 @@ type Example struct {
 	Prompt       string    `json:"prompt"`
 	Response     string    `json:"response"`
 	EmPrompt     Embedding `json:"-"`
-	EmResponse   Embedding `json:"-"`
 	EmPromptResp Embedding `json:"-" db:"type:blob"`
 }
 
@@ -206,8 +191,7 @@ func testSearch(ctx context.Context, query string) error {
 	}
 	emBytes := Embedding(emQuery.Embeddings[0].Embedding).Binary()
 	rows, err := db.D.QueryContext(ctx,
-		"SELECT prompt, response FROM examples ORDER BY vector_distance_cos(em_prompt_response, ?) LIMIT 5",
-		emBytes)
+		"SELECT prompt, response FROM examples ORDER BY vector_distance_cos(em_prompt, ?) LIMIT 5", emBytes)
 	if err != nil {
 		return fmt.Errorf("error querying database: %w", err)
 	}
@@ -297,10 +281,11 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 
 		// Insert examples for this tool
 		for _, example := range tool.Examples {
+			emPromptBytes := example.EmPrompt.Binary()
 			emPromptRespBytes := example.EmPromptResp.Binary()
 			_, err := tx.ExecContext(ctx,
-				"INSERT INTO examples (tool_id, prompt, response, em_prompt_response) VALUES (?, ?, ?, ?)",
-				toolID, example.Prompt, example.Response, emPromptRespBytes)
+				"INSERT INTO examples (tool_id, prompt, response, em_prompt, em_prompt_response) VALUES (?, ?, ?, ?, ?)",
+				toolID, example.Prompt, example.Response, emPromptBytes, emPromptRespBytes)
 			if err != nil {
 				return fmt.Errorf("error inserting example: %w", err)
 			}
@@ -317,6 +302,7 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 	slog.Info("Successfully ingested all tools and examples", "toolCount", len(fileSlice))
 	return nil
 }
+
 func migrate(ctx context.Context) error {
 	// Check if the migrations table exists
 	var tableExists bool
@@ -381,7 +367,6 @@ CREATE TABLE IF NOT EXISTS examples (
   response TEXT,
   -- 768-dimensional f32 vector embeddings
   em_prompt F32_BLOB(768), 
-  em_response F32_BLOB(768), 
   em_prompt_response F32_BLOB(768)
 );
 `
