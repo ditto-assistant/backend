@@ -143,7 +143,59 @@ func main() {
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
+
 		}
+		if bod.Model == "text-embedding-3-small" {
+			// OpenAI Embeddings
+			type RequestEmbeddingOpenAI struct {
+				Input          string `json:"input"`
+				Model          string `json:"model"`
+				EncodingFormat string `json:"encoding_format"`
+			}
+			var buf bytes.Buffer
+			if err := json.NewEncoder(&buf).Encode(RequestEmbeddingOpenAI{
+				Input:          bod.Text,
+				Model:          bod.Model,
+				EncodingFormat: "float",
+			}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/embeddings", &buf)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+secr.OPENAI_EMBEDDINGS_API_KEY)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				http.Error(w, fmt.Sprintf("failed to generate embedding: %s", resp.Status), resp.StatusCode)
+				return
+			}
+			var respBody struct {
+				Data []struct {
+					Embedding []float32 `json:"embedding"`
+				} `json:"data"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			if len(respBody.Data) == 0 {
+				http.Error(w, "no embeddings returned", http.StatusInternalServerError)
+				return
+			}
+			json.NewEncoder(w).Encode(respBody.Data[0].Embedding)
+			return
+		}
+
+		// Google Vertex AI Embedders
 		if bod.Model != "" {
 			if !vertexai.IsDefinedEmbedder(bod.Model) {
 				http.Error(w, fmt.Sprintf("embedFlow: model not found: %s", bod.Model), http.StatusBadRequest)

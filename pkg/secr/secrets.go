@@ -17,6 +17,7 @@ var (
 	BRAVE_SEARCH_API_KEY            string
 	SEARCH_API_KEY                  string
 	OPENAI_DALLE_API_KEY            string
+	OPENAI_EMBEDDINGS_API_KEY       string
 	TURSO_AUTH_TOKEN_DITTO_EXAMPLES string
 	LIBSQL_ENCRYPTION_KEY           string
 )
@@ -64,6 +65,7 @@ func Setup(ctx context.Context) error {
 	fetchSecret(ctx, sm, "OPENAI_DALLE_API_KEY", &OPENAI_DALLE_API_KEY, group)
 	fetchSecret(ctx, sm, "TURSO_AUTH_TOKEN_DITTO_EXAMPLES", &TURSO_AUTH_TOKEN_DITTO_EXAMPLES, group)
 	fetchSecret(ctx, sm, "LIBSQL_ENCRYPTION_KEY", &LIBSQL_ENCRYPTION_KEY, group)
+	fetchSecret(ctx, sm, "OPENAI_EMBEDDINGS_API_KEY", &OPENAI_EMBEDDINGS_API_KEY, group)
 	if err := group.Wait(); err != nil {
 		return err
 	}
