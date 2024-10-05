@@ -19,6 +19,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/img"
 	"github.com/ditto-assistant/backend/pkg/rq"
+	"github.com/ditto-assistant/backend/pkg/search/brave"
 	"github.com/ditto-assistant/backend/pkg/secr"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
@@ -252,6 +253,12 @@ func main() {
 		if bod.NumResults == 0 {
 			bod.NumResults = 5
 		}
+		search, err := brave.Search(r.Context(), bod.Query, bod.NumResults)
+		if err == nil {
+			search.Text(w)
+			return
+		}
+		slog.Error("failed to search with Brave, trying Google", "error", err)
 		ser, err := customSearch.Cse.List().Do(
 			googleapi.QueryParameter("q", bod.Query),
 			googleapi.QueryParameter("num", strconv.Itoa(bod.NumResults)),
