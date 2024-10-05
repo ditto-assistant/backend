@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"time"
 
 	"github.com/ditto-assistant/backend/pkg/secr"
 )
@@ -53,11 +52,8 @@ func (r Results) Text(w io.Writer) error {
 		for i, result := range r.Videos.Results {
 			fmt.Fprintf(w, "%d. [%s](%s)\n", i+1, result.Title, result.URL)
 			fmt.Fprintf(w, "   Description: %s\n", result.Description)
-			if result.Age != nil {
-				fmt.Fprintf(w, "   Age: %s\n", *result.Age)
-			}
-			if !result.PageAge.IsZero() {
-				fmt.Fprintf(w, "   Page Age: %s\n", result.PageAge.Format("January 2, 2006"))
+			if result.Age != "" {
+				fmt.Fprintf(w, "   Age: %s\n", result.Age)
 			}
 			fmt.Fprintf(w, "   Source: %s\n", result.MetaURL.Hostname)
 			fmt.Fprintf(w, "   Thumbnail: %s\n\n", result.Thumbnail.Src)
@@ -72,7 +68,9 @@ func (r Results) Text(w io.Writer) error {
 		for i, result := range r.Web.Results {
 			fmt.Fprintf(w, "%d. [%s](%s)\n", i+1, result.Title, result.URL)
 			fmt.Fprintf(w, "   Description: %s\n", result.Description)
-			fmt.Fprintf(w, "   Page Age: %s\n", result.PageAge.Format("January 2, 2006"))
+			if result.Age != "" {
+				fmt.Fprintf(w, "   Age: %s\n", result.Age)
+			}
 			fmt.Fprintf(w, "   Language: %s\n", result.Language)
 			fmt.Fprintf(w, "   Source: %s\n", result.MetaURL.Hostname)
 			if result.Profile.Name != "" {
@@ -143,8 +141,7 @@ type VideosResult struct {
 	URL         string          `json:"url"`
 	Title       string          `json:"title"`
 	Description string          `json:"description"`
-	Age         *string         `json:"age,omitempty"`
-	PageAge     CustomTime      `json:"page_age,omitempty"`
+	Age         string          `json:"age,omitempty"`
 	Video       Video           `json:"video"`
 	MetaURL     MetaURL         `json:"meta_url"`
 	Thumbnail   PurpleThumbnail `json:"thumbnail"`
@@ -178,7 +175,6 @@ type WebResult struct {
 	IsSourceLocal  bool            `json:"is_source_local"`
 	IsSourceBoth   bool            `json:"is_source_both"`
 	Description    string          `json:"description"`
-	PageAge        CustomTime      `json:"page_age"`
 	Profile        Profile         `json:"profile"`
 	Language       string          `json:"language"`
 	FamilyFriendly bool            `json:"family_friendly"`
@@ -188,34 +184,6 @@ type WebResult struct {
 	Thumbnail      FluffyThumbnail `json:"thumbnail"`
 	Age            string          `json:"age"`
 	ExtraSnippets  []string        `json:"extra_snippets"`
-}
-
-// CustomTime is a custom type to handle time parsing
-type CustomTime struct {
-	time.Time
-}
-
-// UnmarshalJSON implements the json.Unmarshaler interface
-func (ct *CustomTime) UnmarshalJSON(b []byte) error {
-	s := string(b)
-	// Remove quotes
-	s = s[1 : len(s)-1]
-
-	// Try parsing with timezone
-	t, err := time.Parse("2006-01-02T15:04:05Z07:00", s)
-	if err == nil {
-		ct.Time = t
-		return nil
-	}
-
-	// If that fails, try parsing without timezone
-	t, err = time.Parse("2006-01-02T15:04:05", s)
-	if err != nil {
-		return err
-	}
-
-	ct.Time = t
-	return nil
 }
 
 type Profile struct {
