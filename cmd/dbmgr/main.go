@@ -72,10 +72,16 @@ func main() {
 
 	case "rollback":
 		mode = ModeRollback
-		if len(globalFlags.Args()) < 2 {
-			log.Fatalf("usage: %s [-env <environment>] rollback <version>", os.Args[0])
+		rollbackFlags := flag.NewFlagSet("rollback", flag.ExitOnError)
+		rollbackFlags.Usage = func() {
+			fmt.Fprintf(os.Stderr, "usage: dbmgr [-env <environment>] rollback <version>\n")
 		}
-		version = globalFlags.Arg(1)
+		rollbackFlags.Parse(globalFlags.Args()[1:])
+		if rollbackFlags.NArg() < 1 {
+			rollbackFlags.Usage()
+			os.Exit(1)
+		}
+		version = rollbackFlags.Arg(0)
 
 	case "ingest":
 		mode = ModeIngest
