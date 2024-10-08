@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -65,6 +66,13 @@ func main() {
 		}
 
 	case "rollback":
+		if len(globalFlags.Args()) < 2 {
+			log.Fatalf("usage: %s [-env <environment>] rollback <version>", os.Args[0])
+		}
+		version := globalFlags.Arg(1)
+		if err := rollback(ctx, version); err != nil {
+			log.Fatalf("failed to rollback database: %s", err)
+		}
 
 	case "ingest":
 		ingestFlags := flag.NewFlagSet("ingest", flag.ExitOnError)
@@ -75,6 +83,7 @@ func main() {
 		if err := ingestPromptExamples(ctx, folder, dryRun); err != nil {
 			log.Fatalf("failed to ingest prompt examples: %s", err)
 		}
+
 	case "search":
 		searchFlags := flag.NewFlagSet("search", flag.ExitOnError)
 		searchFlags.Parse(globalFlags.Args()[1:])
@@ -86,6 +95,7 @@ func main() {
 		if err := testSearch(ctx, query); err != nil {
 			log.Fatalf("failed to test search: %s", err)
 		}
+
 	default:
 		log.Fatalf("unknown command: %s", subcommand)
 	}
@@ -295,6 +305,7 @@ func (te ToolExample) EmbedBatch(ctx context.Context, embedder ai.Embedder) erro
 }
 
 func migrate(ctx context.Context) error {
+	slog.Info("migrating database")
 	_, err := db.D.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS migrations (
 			name TEXT PRIMARY KEY,
@@ -367,6 +378,80 @@ func applyMigration(ctx context.Context, file, version string) error {
 	}
 
 	slog.Debug("migration applied successfully", "file", migrationName)
+	return nil
+}
+
+func rollback(ctx context.Context, version string) error {
+	slog.Info("rolling back database", "version", version)
+	versionFolders, err := filepath.Glob(filepath.Join("cmd/dbmgr/rollbacks/v*"))
+	if err != nil {
+		return fmt.Errorf("error reading rollback version folders: %w", err)
+	}
+	slices.Reverse(versionFolders)
+
+	for _, folder := range versionFolders {
+		folderVersion := filepath.Base(folder)
+		if folderVersion <= version {
+			break // Stop rolling back once we reach the target version
+		}
+
+		files, err := filepath.Glob(filepath.Join(folder, "*.sql"))
+		if err != nil {
+			return fmt.Errorf("error reading rollback files in %s: %w", folder, err)
+		}
+		slices.Reverse(files)
+
+		for _, file := range files {
+			if err := applyRollback(ctx, file); err != nil {
+				return err
+			}
+		}
+	}
+	slog.Info("database rolled back successfully")
+	return nil
+}
+
+func applyRollback(ctx context.Context, file string) error {
+	rollbackName := strings.TrimSuffix(filepath.Base(file), ".sql")
+	var count int
+	err := db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE name = ?", rollbackName).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("error checking migration status: %w", err)
+	}
+	if count == 0 {
+		slog.Debug("migration not applied, skipping rollback", "file", rollbackName)
+		return nil
+	}
+
+	contents, err := os.ReadFile(file)
+	if err != nil {
+		return fmt.Errorf("error reading rollback file %s: %w", file, err)
+	}
+	tx, err := db.D.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("error beginning transaction for %s: %w", file, err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, string(contents))
+	if err != nil {
+		return fmt.Errorf("error rolling back migration %s: %w", file, err)
+	}
+
+	_, err = tx.ExecContext(ctx, "DELETE FROM migrations WHERE name = ? AND EXISTS (SELECT 1 FROM migrations LIMIT 1)", rollbackName)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such table") {
+			slog.Warn("migrations table does not exist, skipping deletion", "name", rollbackName)
+		} else {
+			return fmt.Errorf("error deleting migration record for %s: %w", rollbackName, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("error committing rollback for %s: %w", rollbackName, err)
+	}
+
+	slog.Debug("rollback applied successfully", "file", rollbackName)
 	return nil
 }
 
