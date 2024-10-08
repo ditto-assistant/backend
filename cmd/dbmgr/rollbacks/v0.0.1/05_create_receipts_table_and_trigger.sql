@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS receipts;
+
+DROP TRIGGER IF EXISTS update_balance;

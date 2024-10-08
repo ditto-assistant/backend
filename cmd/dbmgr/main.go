@@ -23,17 +23,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-type Mode int
-
-const (
-	ModeIngest Mode = iota
-	ModeSearch
-)
-
 var (
 	dittoEnv envs.Env
 	folder   string
-	mode     Mode
 	dryRun   bool
 	query    string
 )
@@ -43,49 +35,20 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Create a new FlagSet for global flags
+	// Parse global flags
 	globalFlags := flag.NewFlagSet("global", flag.ExitOnError)
 	envFlag := globalFlags.String("env", envs.EnvLocal.String(), "ditto environment")
-
-	// Parse global flags
 	globalFlags.Parse(os.Args[1:])
-
-	// Set dittoEnv based on the parsed flag
 	dittoEnv = envs.Env(*envFlag)
 	envs.DITTO_ENV = dittoEnv
 	err := dittoEnv.EnvFile().Load()
 	if err != nil {
 		log.Fatalf("error loading environment file: %s", err)
 	}
-
-	// Check if there's a subcommand
 	if globalFlags.NArg() < 1 {
 		log.Fatalf("usage: %s [-env <environment>] <command> [args]", os.Args[0])
 	}
-
-	// Get the subcommand
 	subcommand := globalFlags.Arg(0)
-
-	switch subcommand {
-	case "ingest":
-		mode = ModeIngest
-		ingestFlags := flag.NewFlagSet("ingest", flag.ExitOnError)
-		ingestFlags.StringVar(&folder, "folder", "cmd/dbmgr/tool-examples", "folder to ingest")
-		ingestFlags.BoolVar(&dryRun, "dry-run", false, "dry run")
-		ingestFlags.Parse(globalFlags.Args()[1:])
-		slog.Debug("ingest mode", "folder", folder, "dry-run", dryRun, "env", dittoEnv)
-	case "search":
-		mode = ModeSearch
-		searchFlags := flag.NewFlagSet("search", flag.ExitOnError)
-		searchFlags.Parse(globalFlags.Args()[1:])
-		if searchFlags.NArg() < 1 {
-			log.Fatalf("usage: %s [-env <environment>] search <query>", os.Args[0])
-		}
-		query = strings.Join(searchFlags.Args(), " ")
-		slog.Debug("search mode", "query", query, "env", dittoEnv)
-	default:
-		log.Fatalf("unknown command: %s", subcommand)
-	}
 
 	if err := secr.Setup(ctx); err != nil {
 		log.Fatalf("failed to initialize secrets: %s", err)
@@ -94,24 +57,52 @@ func main() {
 	if err := db.Setup(ctx, &shutdown); err != nil {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
-	if err := migrate(ctx); err != nil {
-		log.Fatalf("failed to migrate database: %s", err)
-	}
-	switch mode {
-	case ModeIngest:
+
+	switch subcommand {
+	case "migrate":
+		if err := migrate(ctx); err != nil {
+			log.Fatalf("failed to migrate database: %s", err)
+		}
+
+	case "rollback":
+
+	case "ingest":
+		ingestFlags := flag.NewFlagSet("ingest", flag.ExitOnError)
+		ingestFlags.StringVar(&folder, "folder", "cmd/dbmgr/tool-examples", "folder to ingest")
+		ingestFlags.BoolVar(&dryRun, "dry-run", false, "dry run")
+		ingestFlags.Parse(globalFlags.Args()[1:])
+		slog.Debug("ingest mode", "folder", folder, "dry-run", dryRun, "env", dittoEnv)
 		if err := ingestPromptExamples(ctx, folder, dryRun); err != nil {
 			log.Fatalf("failed to ingest prompt examples: %s", err)
 		}
-	case ModeSearch:
+	case "search":
+		searchFlags := flag.NewFlagSet("search", flag.ExitOnError)
+		searchFlags.Parse(globalFlags.Args()[1:])
+		if searchFlags.NArg() < 1 {
+			log.Fatalf("usage: %s [-env <environment>] search <query>", os.Args[0])
+		}
+		query = strings.Join(searchFlags.Args(), " ")
+		slog.Debug("search mode", "query", query, "env", dittoEnv)
 		if err := testSearch(ctx, query); err != nil {
 			log.Fatalf("failed to test search: %s", err)
 		}
+	default:
+		log.Fatalf("unknown command: %s", subcommand)
 	}
+
 	cancel()
 	shutdown.Wait()
 }
 
 func testSearch(ctx context.Context, query string) error {
+	minVersion := "v0.0.1"
+	latestVersion, err := getLatestVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting latest version: %w", err)
+	}
+	if latestVersion < minVersion {
+		return fmt.Errorf("version %s is not applied, please apply at least version %s before searching", latestVersion, minVersion)
+	}
 	if err := vertexai.Init(ctx, &vertexai.Config{
 		ProjectID: "ditto-app-dev",
 		Location:  "us-central1",
@@ -152,6 +143,14 @@ func testSearch(ctx context.Context, query string) error {
 }
 
 func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error {
+	minVersion := "v0.0.1"
+	latestVersion, err := getLatestVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting latest version: %w", err)
+	}
+	if latestVersion < minVersion {
+		return fmt.Errorf("version %s is not applied, please apply at least version %s before embedding", latestVersion, minVersion)
+	}
 	if err := vertexai.Init(ctx, &vertexai.Config{
 		ProjectID: "ditto-app-dev",
 		Location:  "us-central1",
@@ -296,70 +295,86 @@ func (te ToolExample) EmbedBatch(ctx context.Context, embedder ai.Embedder) erro
 }
 
 func migrate(ctx context.Context) error {
-	// First, ensure the migrations table exists
 	_, err := db.D.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS migrations (
-			migration_name TEXT PRIMARY KEY,
-			migration_date TEXT DEFAULT (datetime('now'))
+			name TEXT PRIMARY KEY,
+			date TEXT DEFAULT (datetime('now')),
+			version TEXT NOT NULL
 		)
 	`)
 	if err != nil {
 		return fmt.Errorf("error creating migrations table: %w", err)
 	}
 
-	files, err := filepath.Glob("cmd/dbmgr/migrations/*.sql")
+	versionFolders, err := filepath.Glob("cmd/dbmgr/migrations/v*")
 	if err != nil {
-		return fmt.Errorf("error reading migrations: %w", err)
+		return fmt.Errorf("error reading migration version folders: %w", err)
 	}
 
-	for _, file := range files {
-		migrationName := filepath.Base(file)
-
-		// Check if this migration has already been applied
-		var count int
-		err := db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE migration_name = ?", migrationName).Scan(&count)
+	for _, versionFolder := range versionFolders {
+		files, err := filepath.Glob(filepath.Join(versionFolder, "*.sql"))
 		if err != nil {
-			return fmt.Errorf("error checking migration status: %w", err)
+			return fmt.Errorf("error reading migrations in %s: %w", versionFolder, err)
 		}
 
-		if count > 0 {
-			slog.Debug("migration already applied, skipping", "file", migrationName)
-			continue
+		version := filepath.Base(versionFolder)
+		for _, file := range files {
+			if err := applyMigration(ctx, file, version); err != nil {
+				return err
+			}
 		}
-
-		contents, err := os.ReadFile(file)
-		if err != nil {
-			return fmt.Errorf("error reading migration file %s: %w", file, err)
-		}
-		slog.Debug("applying migration", "file", migrationName)
-
-		// Start a new transaction for each migration
-		tx, err := db.D.BeginTx(ctx, nil)
-		if err != nil {
-			return fmt.Errorf("error beginning transaction for %s: %w", file, err)
-		}
-
-		_, err = tx.ExecContext(ctx, string(contents))
-		if err != nil {
-			tx.Rollback()
-			return fmt.Errorf("error applying migration %s: %w", file, err)
-		}
-
-		// Record this migration as applied
-		_, err = tx.ExecContext(ctx, "INSERT INTO migrations (migration_name) VALUES (?)", migrationName)
-		if err != nil {
-			tx.Rollback()
-			return fmt.Errorf("error recording migration %s: %w", file, err)
-		}
-
-		// Commit the transaction for this migration
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("error committing migration %s: %w", file, err)
-		}
-
-		slog.Debug("migration applied successfully", "file", migrationName)
 	}
 
 	slog.Info("all migrations completed successfully")
 	return nil
+}
+
+func applyMigration(ctx context.Context, file, version string) error {
+	migrationName := strings.TrimSuffix(filepath.Base(file), ".sql")
+	var count int
+	err := db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE name = ?", migrationName).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("error checking migration status: %w", err)
+	}
+	if count > 0 {
+		slog.Debug("migration already applied, skipping", "file", migrationName)
+		return nil
+	}
+
+	contents, err := os.ReadFile(file)
+	if err != nil {
+		return fmt.Errorf("error reading migration file %s: %w", file, err)
+	}
+	tx, err := db.D.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("error beginning transaction for %s: %w", file, err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, string(contents))
+	if err != nil {
+		return fmt.Errorf("error applying migration %s: %w", file, err)
+	}
+
+	// Record this migration as applied
+	_, err = tx.ExecContext(ctx, "INSERT INTO migrations (name, version) VALUES (?, ?)", migrationName, version)
+	if err != nil {
+		return fmt.Errorf("error recording migration %s: %w", file, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("error committing migration %s: %w", file, err)
+	}
+
+	slog.Debug("migration applied successfully", "file", migrationName)
+	return nil
+}
+
+func getLatestVersion(ctx context.Context) (string, error) {
+	var version string
+	err := db.D.QueryRowContext(ctx, "SELECT version FROM migrations ORDER BY date DESC, version DESC LIMIT 1").Scan(&version)
+	if err != nil {
+		return "", fmt.Errorf("error getting latest version: %w", err)
+	}
+	return version, nil
 }
