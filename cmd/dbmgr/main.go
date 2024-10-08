@@ -29,10 +29,23 @@ var (
 	folder   string
 	dryRun   bool
 	query    string
+	mode     Mode
+)
+
+type Mode int
+
+const (
+	ModeUnknown Mode = iota
+	ModeMigrate
+	ModeRollback
+	ModeSearch
+	ModeIngest
 )
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	var shutdown sync.WaitGroup
+	defer shutdown.Wait()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -51,60 +64,73 @@ func main() {
 	}
 	subcommand := globalFlags.Arg(0)
 
-	if err := secr.Setup(ctx); err != nil {
-		log.Fatalf("failed to initialize secrets: %s", err)
-	}
-	var shutdown sync.WaitGroup
-	if err := db.Setup(ctx, &shutdown); err != nil {
-		log.Fatalf("failed to initialize database: %s", err)
-	}
-
+	// Parse subcommand flags
+	var version string
 	switch subcommand {
 	case "migrate":
-		if err := migrate(ctx); err != nil {
-			log.Fatalf("failed to migrate database: %s", err)
-		}
+		mode = ModeMigrate
 
 	case "rollback":
+		mode = ModeRollback
 		if len(globalFlags.Args()) < 2 {
 			log.Fatalf("usage: %s [-env <environment>] rollback <version>", os.Args[0])
 		}
-		version := globalFlags.Arg(1)
-		if err := rollback(ctx, version); err != nil {
-			log.Fatalf("failed to rollback database: %s", err)
-		}
+		version = globalFlags.Arg(1)
 
 	case "ingest":
+		mode = ModeIngest
 		ingestFlags := flag.NewFlagSet("ingest", flag.ExitOnError)
 		ingestFlags.StringVar(&folder, "folder", "cmd/dbmgr/tool-examples", "folder to ingest")
 		ingestFlags.BoolVar(&dryRun, "dry-run", false, "dry run")
 		ingestFlags.Parse(globalFlags.Args()[1:])
-		slog.Debug("ingest mode", "folder", folder, "dry-run", dryRun, "env", dittoEnv)
-		if err := ingestPromptExamples(ctx, folder, dryRun); err != nil {
-			log.Fatalf("failed to ingest prompt examples: %s", err)
-		}
 
 	case "search":
+		mode = ModeSearch
 		searchFlags := flag.NewFlagSet("search", flag.ExitOnError)
+		searchFlags.Usage = func() {
+			fmt.Fprintf(os.Stderr, "usage: dbmgr [-env <environment>] search <query>\n")
+		}
 		searchFlags.Parse(globalFlags.Args()[1:])
 		if searchFlags.NArg() < 1 {
-			log.Fatalf("usage: %s [-env <environment>] search <query>", os.Args[0])
+			searchFlags.Usage()
+			os.Exit(1)
 		}
 		query = strings.Join(searchFlags.Args(), " ")
 		slog.Debug("search mode", "query", query, "env", dittoEnv)
-		if err := testSearch(ctx, query); err != nil {
-			log.Fatalf("failed to test search: %s", err)
-		}
 
 	default:
 		log.Fatalf("unknown command: %s", subcommand)
 	}
 
-	cancel()
-	shutdown.Wait()
+	if err := secr.Setup(ctx); err != nil {
+		log.Fatalf("failed to initialize secrets: %s", err)
+	}
+	if err := db.Setup(ctx, &shutdown); err != nil {
+		log.Fatalf("failed to initialize database: %s", err)
+	}
+
+	switch mode {
+	case ModeMigrate:
+		if err := migrate(ctx); err != nil {
+			log.Fatalf("failed to migrate database: %s", err)
+		}
+	case ModeRollback:
+		if err := rollback(ctx, version); err != nil {
+			log.Fatalf("failed to rollback database: %s", err)
+		}
+	case ModeIngest:
+		if err := ingestPromptExamples(ctx, folder, dryRun); err != nil {
+			log.Fatalf("failed to ingest prompt examples: %s", err)
+		}
+	case ModeSearch:
+		if err := testSearch(ctx, query); err != nil {
+			log.Fatalf("failed to test search: %s", err)
+		}
+	}
 }
 
 func testSearch(ctx context.Context, query string) error {
+	slog.Debug("test search", "query", query)
 	minVersion := "v0.0.1"
 	latestVersion, err := getLatestVersion(ctx)
 	if err != nil {
@@ -153,6 +179,7 @@ func testSearch(ctx context.Context, query string) error {
 }
 
 func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error {
+	slog.Info("ingesting prompt examples", "folder", folder, "dry-run", dryRun)
 	minVersion := "v0.0.1"
 	latestVersion, err := getLatestVersion(ctx)
 	if err != nil {
@@ -412,9 +439,17 @@ func rollback(ctx context.Context, version string) error {
 }
 
 func applyRollback(ctx context.Context, file string) error {
+	var tableExists bool
+	err := db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='migrations'").Scan(&tableExists)
+	if err != nil {
+		return fmt.Errorf("error checking if migrations table exists: %w", err)
+	}
+	if !tableExists {
+		return errors.New("migrations table does not exist, cannot apply rollback")
+	}
 	rollbackName := strings.TrimSuffix(filepath.Base(file), ".sql")
 	var count int
-	err := db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE name = ?", rollbackName).Scan(&count)
+	err = db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE name = ?", rollbackName).Scan(&count)
 	if err != nil {
 		return fmt.Errorf("error checking migration status: %w", err)
 	}
