@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS users (
+  uid TEXT UNIQUE NOT NULL,
+  name TEXT,
+  balance REAL DEFAULT 0
+);

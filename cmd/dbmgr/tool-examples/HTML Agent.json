@@ -2,6 +2,7 @@
   "name": "HTML Agent",
   "version": "1.0.0",
   "description": "Examples of user prompts that require the HTML agent.",
+  "cost_multiplier": 1.75,
   "examples": [
     {
       "prompt": "Make an app that is a todo list for all my needs",

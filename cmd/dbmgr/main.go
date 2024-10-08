@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -16,9 +15,11 @@ import (
 
 	"github.com/ditto-assistant/backend/pkg/consts"
 	"github.com/ditto-assistant/backend/pkg/db"
+	"github.com/ditto-assistant/backend/pkg/envs"
 	"github.com/ditto-assistant/backend/pkg/secr"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/plugins/vertexai"
+	_ "github.com/tursodatabase/go-libsql"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -30,37 +31,60 @@ const (
 )
 
 var (
-	folder string
-	mode   Mode
-	dryRun bool
-	query  string
+	dittoEnv envs.Env
+	folder   string
+	mode     Mode
+	dryRun   bool
+	query    string
 )
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if len(os.Args) < 2 {
-		log.Fatalf("usage: %s <command> [args]", os.Args[0])
+
+	// Create a new FlagSet for global flags
+	globalFlags := flag.NewFlagSet("global", flag.ExitOnError)
+	envFlag := globalFlags.String("env", envs.EnvLocal.String(), "ditto environment")
+
+	// Parse global flags
+	globalFlags.Parse(os.Args[1:])
+
+	// Set dittoEnv based on the parsed flag
+	dittoEnv = envs.Env(*envFlag)
+	envs.DITTO_ENV = dittoEnv
+	err := dittoEnv.EnvFile().Load()
+	if err != nil {
+		log.Fatalf("error loading environment file: %s", err)
 	}
 
-	switch os.Args[1] {
+	// Check if there's a subcommand
+	if globalFlags.NArg() < 1 {
+		log.Fatalf("usage: %s [-env <environment>] <command> [args]", os.Args[0])
+	}
+
+	// Get the subcommand
+	subcommand := globalFlags.Arg(0)
+
+	switch subcommand {
 	case "ingest":
 		mode = ModeIngest
-		fset := flag.NewFlagSet("ingest", flag.ExitOnError)
-		fset.StringVar(&folder, "folder", "cmd/dbmgr/tool-examples", "folder to ingest")
-		fset.BoolVar(&dryRun, "dry-run", false, "dry run")
-		fset.Parse(os.Args[2:])
-		slog.Debug("ingest mode", "folder", folder, "dry-run", dryRun)
+		ingestFlags := flag.NewFlagSet("ingest", flag.ExitOnError)
+		ingestFlags.StringVar(&folder, "folder", "cmd/dbmgr/tool-examples", "folder to ingest")
+		ingestFlags.BoolVar(&dryRun, "dry-run", false, "dry run")
+		ingestFlags.Parse(globalFlags.Args()[1:])
+		slog.Debug("ingest mode", "folder", folder, "dry-run", dryRun, "env", dittoEnv)
 	case "search":
 		mode = ModeSearch
-		if len(os.Args) < 3 {
-			log.Fatalf("usage: %s search <query>", os.Args[0])
+		searchFlags := flag.NewFlagSet("search", flag.ExitOnError)
+		searchFlags.Parse(globalFlags.Args()[1:])
+		if searchFlags.NArg() < 1 {
+			log.Fatalf("usage: %s [-env <environment>] search <query>", os.Args[0])
 		}
-		query = strings.Join(os.Args[2:], " ")
-		slog.Debug("search mode", "query", query)
+		query = strings.Join(searchFlags.Args(), " ")
+		slog.Debug("search mode", "query", query, "env", dittoEnv)
 	default:
-		log.Fatalf("unknown command: %s", os.Args[1])
+		log.Fatalf("unknown command: %s", subcommand)
 	}
 
 	if err := secr.Setup(ctx); err != nil {
@@ -270,67 +294,72 @@ func (te ToolExample) EmbedBatch(ctx context.Context, embedder ai.Embedder) erro
 	}
 	return nil
 }
+
 func migrate(ctx context.Context) error {
-	// Check if the migrations table exists
-	var tableExists bool
-	var name string
-	err := db.D.QueryRowContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name='migrations'").Scan(&name)
-	tableExists = (name == "migrations")
-	if err != nil && err != sql.ErrNoRows {
-		return fmt.Errorf("error checking if migrations table exists: %w", err)
+	// First, ensure the migrations table exists
+	_, err := db.D.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS migrations (
+			migration_name TEXT PRIMARY KEY,
+			migration_date TEXT DEFAULT (datetime('now'))
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("error creating migrations table: %w", err)
 	}
-	if !tableExists {
-		slog.Debug("migrations table does not exist, running initial migration")
-	} else {
-		// Check if we have at least one migration
+
+	files, err := filepath.Glob("cmd/dbmgr/migrations/*.sql")
+	if err != nil {
+		return fmt.Errorf("error reading migrations: %w", err)
+	}
+
+	for _, file := range files {
+		migrationName := filepath.Base(file)
+
+		// Check if this migration has already been applied
 		var count int
-		err = db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations").Scan(&count)
+		err := db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE migration_name = ?", migrationName).Scan(&count)
 		if err != nil {
-			return fmt.Errorf("error checking migrations: %w", err)
-		} else if count > 0 {
-			slog.Debug("tables already migrated", "migrations", count)
-			return nil
-		} else {
-			slog.Debug("migrations table exists but no migrations found")
+			return fmt.Errorf("error checking migration status: %w", err)
 		}
+
+		if count > 0 {
+			slog.Debug("migration already applied, skipping", "file", migrationName)
+			continue
+		}
+
+		contents, err := os.ReadFile(file)
+		if err != nil {
+			return fmt.Errorf("error reading migration file %s: %w", file, err)
+		}
+		slog.Debug("applying migration", "file", migrationName)
+
+		// Start a new transaction for each migration
+		tx, err := db.D.BeginTx(ctx, nil)
+		if err != nil {
+			return fmt.Errorf("error beginning transaction for %s: %w", file, err)
+		}
+
+		_, err = tx.ExecContext(ctx, string(contents))
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("error applying migration %s: %w", file, err)
+		}
+
+		// Record this migration as applied
+		_, err = tx.ExecContext(ctx, "INSERT INTO migrations (migration_name) VALUES (?)", migrationName)
+		if err != nil {
+			tx.Rollback()
+			return fmt.Errorf("error recording migration %s: %w", file, err)
+		}
+
+		// Commit the transaction for this migration
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("error committing migration %s: %w", file, err)
+		}
+
+		slog.Debug("migration applied successfully", "file", migrationName)
 	}
 
-	tx, err := db.D.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("error beginning transaction: %w", err)
-	}
-	defer tx.Rollback()
-	// Create the initial migration
-	_, err = tx.ExecContext(ctx, createExampleStore)
-	if err != nil {
-		return fmt.Errorf("error creating tables: %w", err)
-	}
-	slog.Debug("tables migrated")
-	return tx.Commit()
+	slog.Info("all migrations completed successfully")
+	return nil
 }
-
-const createExampleStore = `
-CREATE TABLE IF NOT EXISTS migrations (
-  migration_name TEXT,
-  migration_date TEXT DEFAULT (datetime('now'))
-);
-INSERT INTO migrations (migration_name) 
-SELECT 'table_init' 
-WHERE NOT EXISTS (SELECT 1 FROM migrations);
-
-
-CREATE TABLE IF NOT EXISTS tools (
-  name TEXT,
-  description TEXT,
-  version TEXT
-);
-
-CREATE TABLE IF NOT EXISTS examples (
-  tool_id INTEGER,
-  prompt TEXT,
-  response TEXT,
-  -- 768-dimensional f32 vector embeddings
-  em_prompt F32_BLOB(768), 
-  em_prompt_response F32_BLOB(768)
-);
-`

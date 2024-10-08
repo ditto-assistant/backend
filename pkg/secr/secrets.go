@@ -14,20 +14,20 @@ import (
 
 // Secrets
 var (
-	BRAVE_SEARCH_API_KEY            string
-	SEARCH_API_KEY                  string
-	OPENAI_DALLE_API_KEY            string
-	OPENAI_EMBEDDINGS_API_KEY       string
-	TURSO_AUTH_TOKEN_DITTO_EXAMPLES string
-	LIBSQL_ENCRYPTION_KEY           string
+	BRAVE_SEARCH_API_KEY      string
+	SEARCH_API_KEY            string
+	OPENAI_DALLE_API_KEY      string
+	OPENAI_EMBEDDINGS_API_KEY string
+	LIBSQL_ENCRYPTION_KEY     string
+	TURSO_AUTH_TOKEN          string
 )
 
 func fetchSecret(
 	ctx context.Context,
+	group *errgroup.Group,
 	sm *secretmanager.Service,
 	secName string,
 	secPtr *string,
-	group *errgroup.Group,
 ) {
 	group.Go(func() error {
 		var sb strings.Builder
@@ -54,20 +54,25 @@ func fetchSecret(
 func Setup(ctx context.Context) error {
 	sm, err := secretmanager.NewService(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to create secret manager: %w", err)
 	}
 	if err := envs.Load(); err != nil {
-		return err
+		return fmt.Errorf("failed to load environment variables: %w", err)
 	}
 	group, ctx := errgroup.WithContext(ctx)
-	fetchSecret(ctx, sm, "BRAVE_SEARCH_API_KEY", &BRAVE_SEARCH_API_KEY, group)
-	fetchSecret(ctx, sm, "SEARCH_API_KEY", &SEARCH_API_KEY, group)
-	fetchSecret(ctx, sm, "OPENAI_DALLE_API_KEY", &OPENAI_DALLE_API_KEY, group)
-	fetchSecret(ctx, sm, "TURSO_AUTH_TOKEN_DITTO_EXAMPLES", &TURSO_AUTH_TOKEN_DITTO_EXAMPLES, group)
-	fetchSecret(ctx, sm, "LIBSQL_ENCRYPTION_KEY", &LIBSQL_ENCRYPTION_KEY, group)
-	fetchSecret(ctx, sm, "OPENAI_EMBEDDINGS_API_KEY", &OPENAI_EMBEDDINGS_API_KEY, group)
+	fetchSecret(ctx, group, sm, "BRAVE_SEARCH_API_KEY", &BRAVE_SEARCH_API_KEY)
+	fetchSecret(ctx, group, sm, "SEARCH_API_KEY", &SEARCH_API_KEY)
+	fetchSecret(ctx, group, sm, "OPENAI_DALLE_API_KEY", &OPENAI_DALLE_API_KEY)
+	fetchSecret(ctx, group, sm, "LIBSQL_ENCRYPTION_KEY", &LIBSQL_ENCRYPTION_KEY)
+	fetchSecret(ctx, group, sm, "OPENAI_EMBEDDINGS_API_KEY", &OPENAI_EMBEDDINGS_API_KEY)
+	switch envs.DITTO_ENV {
+	case envs.EnvStaging:
+		fetchSecret(ctx, group, sm, "STAGING_TURSO_AUTH_TOKEN", &TURSO_AUTH_TOKEN)
+	case envs.EnvProd:
+		fetchSecret(ctx, group, sm, "PROD_TURSO_AUTH_TOKEN", &TURSO_AUTH_TOKEN)
+	}
 	if err := group.Wait(); err != nil {
-		return err
+		return fmt.Errorf("failed to fetch secrets: %w", err)
 	}
 	return nil
 }

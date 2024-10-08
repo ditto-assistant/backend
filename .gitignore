@@ -1,3 +1,4 @@
-.env
+.env*
 service.json
 secrets
+ditto.db
