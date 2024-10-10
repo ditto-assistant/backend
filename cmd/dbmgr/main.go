@@ -204,13 +204,13 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 	if err != nil {
 		return fmt.Errorf("error reading folder: %w", err)
 	}
-	fileSlice := make([]ToolExample, 0, len(files))
+	fileSlice := make([]ToolExamples, 0, len(files))
 	for _, file := range files {
 		file, err := os.Open(file)
 		if err != nil {
 			return fmt.Errorf("error opening file: %w", err)
 		}
-		var toolExamples ToolExample
+		var toolExamples ToolExamples
 		if err := json.NewDecoder(file).Decode(&toolExamples); err != nil {
 			return fmt.Errorf("error reading file: %w", err)
 		}
@@ -249,8 +249,8 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 	for _, tool := range fileSlice {
 		// Insert into tools table
 		result, err := tx.ExecContext(ctx,
-			"INSERT INTO tools (name, description, version) VALUES (?, ?, ?)",
-			tool.Name, tool.Description, tool.Version)
+			"INSERT INTO tools (name, description, version, cost_per_call, cost_multiplier, base_tokens) VALUES (?, ?, ?, ?, ?, ?)",
+			tool.Name, tool.Description, tool.Version, tool.CostPerCall, tool.CostMultiplier, tool.BaseTokens)
 		if err != nil {
 			return fmt.Errorf("error inserting tool: %w", err)
 		}
@@ -284,15 +284,13 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 	return nil
 }
 
-type ToolExample struct {
-	Name        string       `json:"name"`
-	Version     string       `json:"version"`
-	Description string       `json:"description"`
-	Examples    []db.Example `json:"examples"`
+type ToolExamples struct {
+	db.Tool
+	Examples []db.Example `json:"examples"`
 }
 
 // EmbedBatch embeds all the examples in the tool example.
-func (te ToolExample) EmbedBatch(ctx context.Context, embedder ai.Embedder) error {
+func (te ToolExamples) EmbedBatch(ctx context.Context, embedder ai.Embedder) error {
 	docs := make([]*ai.Document, 0, len(te.Examples)*2)
 	for _, example := range te.Examples {
 		// Embed the prompt

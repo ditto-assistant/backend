@@ -22,10 +22,19 @@ func (e Embedding) Binary() []byte {
 	return buf.Bytes()
 }
 
+type Tool struct {
+	Name           string  `json:"name"`
+	Description    string  `json:"description"`
+	Version        string  `json:"version"`
+	CostPerCall    float64 `json:"cost_per_call"`
+	CostMultiplier float64 `json:"cost_multiplier"`
+	BaseTokens     int     `json:"base_tokens"`
+}
+
 type Example struct {
 	Prompt       string    `json:"prompt"`
 	Response     string    `json:"response"`
-	EmPrompt     Embedding `json:"-"`
+	EmPrompt     Embedding `json:"-" db:"type:blob"`
 	EmPromptResp Embedding `json:"-" db:"type:blob"`
 }
 

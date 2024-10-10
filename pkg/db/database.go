@@ -25,8 +25,12 @@ func Setup(ctx context.Context, shutdown *sync.WaitGroup) (err error) {
 	}
 	go func() {
 		<-ctx.Done()
-		slog.Debug("shutting down libsql db")
-		D.Close()
+		err := D.Close()
+		if err != nil {
+			slog.Error("error closing libsql db", "error", err)
+		} else {
+			slog.Debug("closed libsql db")
+		}
 		shutdown.Done()
 	}()
 	return nil
