@@ -1,5 +1,6 @@
 {
   "name": "HTML Agent",
+  "model": "claude-3-5-sonnet",
   "version": "1.0.0",
   "description": "Examples of user prompts that require the HTML agent.",
   "cost_multiplier": 1.75,

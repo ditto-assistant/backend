@@ -29,6 +29,7 @@ type Tool struct {
 	CostPerCall    float64 `json:"cost_per_call"`
 	CostMultiplier float64 `json:"cost_multiplier"`
 	BaseTokens     int     `json:"base_tokens"`
+	Model          string  `json:"model"`
 }
 
 type Example struct {

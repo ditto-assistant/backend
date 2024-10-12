@@ -1,5 +1,6 @@
 {
   "name": "Home Assistant",
+  "model": "gemini-1.5-flash",
   "version": "1.0.0",
   "description": "Examples of user prompts that require the Google Home tool.",
   "examples": [

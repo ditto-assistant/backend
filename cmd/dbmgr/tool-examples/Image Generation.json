@@ -1,5 +1,6 @@
 {
   "name": "Image Generation",
+  "model": "dall-e-3",
   "version": "1.0.0",
   "description": "Examples of user prompts that require the Image Generation tool.",
   "examples": [
