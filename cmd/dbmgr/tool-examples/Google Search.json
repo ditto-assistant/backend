@@ -2,7 +2,7 @@
   "name": "Google Search",
   "version": "1.0.0",
   "description": "Examples of user prompts that require the Google Search tool.",
-  "cost_per_call": 10000,
+  "costPerCall": 10000,
   "examples": [
     {
       "prompt": "Can you look up the weather in New York City?",

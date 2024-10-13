@@ -19,6 +19,7 @@ import (
 	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/img"
+	"github.com/ditto-assistant/backend/pkg/llm"
 	"github.com/ditto-assistant/backend/pkg/rq"
 	"github.com/ditto-assistant/backend/pkg/search/brave"
 	"github.com/firebase/genkit/go/ai"
@@ -77,6 +78,10 @@ func main() {
 
 	genkit.DefineStreamingFlow("v1/prompt",
 		func(ctx context.Context, in rq.PromptV1, callback func(context.Context, string) error) (string, error) {
+			user, err := db.GetOrCreateUser(ctx, in.UserID)
+			if err != nil {
+				return "", fmt.Errorf("promptFlow: failed to get or create user: %w", err)
+			}
 			if in.Model != "" {
 				if !vertexai.IsDefinedModel(in.Model) {
 					return "", fmt.Errorf("promptFlow: model not found: %s", in.Model)
@@ -108,6 +113,23 @@ func main() {
 			)
 			if err != nil {
 				return "", err
+			}
+			meta, err := json.Marshal(llm.CallMetadata{
+				SystemPrompt: in.SystemPrompt,
+				UserPrompt:   in.UserPrompt,
+			})
+			if err != nil {
+				return "", fmt.Errorf("promptFlow: failed to marshal call metadata: %w", err)
+			}
+			receipt := db.Receipt{
+				UserID:    user.ID,
+				Tokens:    int64(resp.Usage.OutputTokens),
+				UsageType: "prompt",
+				Model:     in.Model,
+				Metadata:  meta,
+			}
+			if err := receipt.Insert(ctx); err != nil {
+				slog.Error("failed to insert receipt", "error", err)
 			}
 			return resp.Text(), nil
 		},

@@ -170,7 +170,7 @@ func testSearch(ctx context.Context, query string) error {
 	if err != nil {
 		return fmt.Errorf("error embedding query: %w", err)
 	}
-	em := db.Embedding(emQuery.Embeddings[0].Embedding)
+	em := llm.Embedding(emQuery.Embeddings[0].Embedding)
 	examples, err := db.SearchExamples(ctx, em)
 	if err != nil {
 		return fmt.Errorf("error searching examples: %w", err)
@@ -285,8 +285,8 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 }
 
 type ToolExamples struct {
-	db.Tool
-	Examples []db.Example `json:"examples"`
+	llm.Tool
+	Examples []llm.Example `json:"examples"`
 }
 
 // EmbedBatch embeds all the examples in the tool example.

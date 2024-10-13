@@ -1,0 +1,43 @@
+package llm
+
+import (
+	"bytes"
+	"encoding/binary"
+	"log"
+)
+
+type Embedding []float32
+
+func (e Embedding) Binary() []byte {
+	var buf bytes.Buffer
+	buf.Grow(len(e) * 4)
+	for _, v := range e {
+		err := binary.Write(&buf, binary.LittleEndian, v)
+		if err != nil {
+			log.Fatalf("error converting float32 to bytes: %s", err)
+		}
+	}
+	return buf.Bytes()
+}
+
+type Tool struct {
+	Name           string  `json:"name"`
+	Description    string  `json:"description"`
+	Version        string  `json:"version"`
+	CostPerCall    float64 `json:"costPerCall"`
+	CostMultiplier float64 `json:"costMultiplier"`
+	BaseTokens     int     `json:"baseTokens"`
+	Model          string  `json:"model"`
+}
+
+type Example struct {
+	Prompt       string    `json:"prompt"`
+	Response     string    `json:"response"`
+	EmPrompt     Embedding `json:"-" db:"type:blob"`
+	EmPromptResp Embedding `json:"-" db:"type:blob"`
+}
+
+type CallMetadata struct {
+	SystemPrompt string `json:"systemPrompt"`
+	UserPrompt   string `json:"userPrompt"`
+}
