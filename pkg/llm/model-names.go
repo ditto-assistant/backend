@@ -1,4 +1,4 @@
-package consts
+package llm
 
 type ModelName string
 

@@ -14,9 +14,9 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/ditto-assistant/backend/pkg/consts"
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/envs"
+	"github.com/ditto-assistant/backend/pkg/llm"
 	"github.com/ditto-assistant/backend/pkg/secr"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/plugins/vertexai"
@@ -151,7 +151,7 @@ func testSearch(ctx context.Context, query string) error {
 	}); err != nil {
 		return fmt.Errorf("error initializing vertexai: %w", err)
 	}
-	embedder := vertexai.Embedder(consts.ModelTextEmbedding004.String())
+	embedder := vertexai.Embedder(llm.ModelTextEmbedding004.String())
 	if embedder == nil {
 		return errors.New("embedder not found")
 	}
@@ -222,7 +222,7 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 		return nil
 	}
 
-	embedder := vertexai.Embedder(consts.ModelTextEmbedding004.String())
+	embedder := vertexai.Embedder(llm.ModelTextEmbedding004.String())
 	if embedder == nil {
 		return errors.New("embedder not found")
 	}
