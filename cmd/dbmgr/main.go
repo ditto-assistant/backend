@@ -14,10 +14,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/ditto-assistant/backend/cfg/envs"
+	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/db"
-	"github.com/ditto-assistant/backend/pkg/envs"
 	"github.com/ditto-assistant/backend/pkg/llm"
-	"github.com/ditto-assistant/backend/pkg/secr"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/plugins/vertexai"
 	_ "github.com/tursodatabase/go-libsql"

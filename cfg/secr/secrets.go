@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/ditto-assistant/backend/pkg/envs"
+	"github.com/ditto-assistant/backend/cfg/envs"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/api/secretmanager/v1"
 )

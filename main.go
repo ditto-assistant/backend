@@ -16,11 +16,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/img"
 	"github.com/ditto-assistant/backend/pkg/rq"
 	"github.com/ditto-assistant/backend/pkg/search/brave"
-	"github.com/ditto-assistant/backend/pkg/secr"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/firebase"

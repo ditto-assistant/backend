@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"sync"
 
-	"github.com/ditto-assistant/backend/pkg/envs"
-	"github.com/ditto-assistant/backend/pkg/secr"
+	"github.com/ditto-assistant/backend/cfg/envs"
+	"github.com/ditto-assistant/backend/cfg/secr"
 	_ "github.com/tursodatabase/go-libsql"
 )
 

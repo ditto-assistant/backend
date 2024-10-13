@@ -10,7 +10,7 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/ditto-assistant/backend/pkg/envs"
+	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/pkg/llm"
 	"golang.org/x/oauth2/google"
 )
