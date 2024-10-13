@@ -144,7 +144,11 @@ func main() {
 	}()
 
 	corsMiddleware := cors.New(cors.Options{
-		AllowedOrigins: []string{"http://localhost:3000", "https://assistant.heyditto.ai"}, // Allow all origins
+		AllowedOrigins: []string{
+			"http://localhost:3000",
+			"https://assistant.heyditto.ai",
+			"https://ditto-app-dev.web.app",
+		},
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders: []string{"*"}, // Allow all headers
 		MaxAge:         86400,         // 24 hours
