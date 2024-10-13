@@ -76,9 +76,14 @@ func Load() error {
 		env = "local"
 	}
 	DITTO_ENV = Env(env)
-	err := DITTO_ENV.EnvFile().Load()
-	if err != nil {
-		return err
+	_, ok = os.LookupEnv("GCLOUD_PROJECT")
+	if !ok {
+		eFile := DITTO_ENV.EnvFile()
+		slog.Info("Loading environment from file", "file", eFile)
+		err := eFile.Load()
+		if err != nil {
+			return err
+		}
 	}
 	PROJECT_ID, ok = os.LookupEnv("PROJECT_ID")
 	if !ok {
