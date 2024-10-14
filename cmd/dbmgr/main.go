@@ -170,7 +170,7 @@ func testSearch(ctx context.Context, query string) error {
 	if err != nil {
 		return fmt.Errorf("error embedding query: %w", err)
 	}
-	em := db.Embedding(emQuery.Embeddings[0].Embedding)
+	em := llm.Embedding(emQuery.Embeddings[0].Embedding)
 	examples, err := db.SearchExamples(ctx, em)
 	if err != nil {
 		return fmt.Errorf("error searching examples: %w", err)
@@ -247,10 +247,16 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 	defer tx.Rollback()
 
 	for _, tool := range fileSlice {
+		var serviceID int64
+		err := tx.QueryRowContext(ctx, "SELECT id FROM services WHERE name = ?", tool.ServiceName).Scan(&serviceID)
+		if err != nil {
+			return fmt.Errorf("error getting service ID for %s: %w", tool.ServiceName, err)
+		}
+
 		// Insert into tools table
 		result, err := tx.ExecContext(ctx,
-			"INSERT INTO tools (name, description, version, cost_per_call, cost_multiplier, base_tokens) VALUES (?, ?, ?, ?, ?, ?)",
-			tool.Name, tool.Description, tool.Version, tool.CostPerCall, tool.CostMultiplier, tool.BaseTokens)
+			"INSERT INTO tools (name, description, version, service_id) VALUES (?, ?, ?, ?)",
+			tool.Name, tool.Description, tool.Version, serviceID)
 		if err != nil {
 			return fmt.Errorf("error inserting tool: %w", err)
 		}
@@ -285,8 +291,8 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 }
 
 type ToolExamples struct {
-	db.Tool
-	Examples []db.Example `json:"examples"`
+	llm.Tool
+	Examples []llm.Example `json:"examples"`
 }
 
 // EmbedBatch embeds all the examples in the tool example.
@@ -387,25 +393,20 @@ func applyMigration(ctx context.Context, file, version string) error {
 	if err != nil {
 		return fmt.Errorf("error reading migration file %s: %w", file, err)
 	}
-	tx, err := db.D.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("error beginning transaction for %s: %w", file, err)
+	statements := strings.Split(string(contents), ";\n\n")
+	for _, stmt := range statements {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		_, err = db.D.ExecContext(ctx, stmt)
+		if err != nil {
+			return fmt.Errorf("error applying migration %s: %w", file, err)
+		}
 	}
-	defer tx.Rollback()
-
-	_, err = tx.ExecContext(ctx, string(contents))
-	if err != nil {
-		return fmt.Errorf("error applying migration %s: %w", file, err)
-	}
-
-	// Record this migration as applied
-	_, err = tx.ExecContext(ctx, "INSERT INTO migrations (name, version) VALUES (?, ?)", migrationName, version)
+	_, err = db.D.ExecContext(ctx, "INSERT INTO migrations (name, version) VALUES (?, ?)", migrationName, version)
 	if err != nil {
 		return fmt.Errorf("error recording migration %s: %w", file, err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("error committing migration %s: %w", file, err)
 	}
 
 	slog.Debug("migration applied successfully", "file", migrationName)
@@ -466,28 +467,24 @@ func applyRollback(ctx context.Context, file string) error {
 	if err != nil {
 		return fmt.Errorf("error reading rollback file %s: %w", file, err)
 	}
-	tx, err := db.D.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("error beginning transaction for %s: %w", file, err)
+	statements := strings.Split(string(contents), ";\n\n")
+	for _, stmt := range statements {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		_, err = db.D.ExecContext(ctx, stmt)
+		if err != nil {
+			return fmt.Errorf("error rolling back migration %s: %w", file, err)
+		}
 	}
-	defer tx.Rollback()
-
-	_, err = tx.ExecContext(ctx, string(contents))
-	if err != nil {
-		return fmt.Errorf("error rolling back migration %s: %w", file, err)
-	}
-
-	_, err = tx.ExecContext(ctx, "DELETE FROM migrations WHERE name = ? AND EXISTS (SELECT 1 FROM migrations LIMIT 1)", rollbackName)
+	_, err = db.D.ExecContext(ctx, "DELETE FROM migrations WHERE name = ? AND EXISTS (SELECT 1 FROM migrations LIMIT 1)", rollbackName)
 	if err != nil {
 		if strings.Contains(err.Error(), "no such table") {
 			slog.Warn("migrations table does not exist, skipping deletion", "name", rollbackName)
 		} else {
 			return fmt.Errorf("error deleting migration record for %s: %w", rollbackName, err)
 		}
-	}
-
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("error committing rollback for %s: %w", rollbackName, err)
 	}
 
 	slog.Debug("rollback applied successfully", "file", rollbackName)
