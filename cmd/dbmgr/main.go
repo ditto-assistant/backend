@@ -247,10 +247,16 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 	defer tx.Rollback()
 
 	for _, tool := range fileSlice {
+		var serviceID int64
+		err := tx.QueryRowContext(ctx, "SELECT id FROM services WHERE name = ?", tool.ServiceName).Scan(&serviceID)
+		if err != nil {
+			return fmt.Errorf("error getting service ID for %s: %w", tool.ServiceName, err)
+		}
+
 		// Insert into tools table
 		result, err := tx.ExecContext(ctx,
-			"INSERT INTO tools (name, description, version, model) VALUES (?, ?, ?, ?)",
-			tool.Name, tool.Description, tool.Version, tool.Model)
+			"INSERT INTO tools (name, description, version, service_id) VALUES (?, ?, ?, ?)",
+			tool.Name, tool.Description, tool.Version, serviceID)
 		if err != nil {
 			return fmt.Errorf("error inserting tool: %w", err)
 		}

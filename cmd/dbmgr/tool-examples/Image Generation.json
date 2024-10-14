@@ -1,8 +1,8 @@
 {
   "name": "Image Generation",
-  "service_name": "dall-e-3",
   "version": "1.0.0",
   "description": "Examples of user prompts that require the Image Generation tool.",
+  "service_name": "dall-e-3",
   "examples": [
     {
       "prompt": "Can you generate an image of a cat?",

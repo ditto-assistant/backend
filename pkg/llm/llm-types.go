@@ -23,10 +23,10 @@ func (e Embedding) Binary() []byte {
 }
 
 type Tool struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Version     string `json:"version"`
-	Model       string `json:"model"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Version     string      `json:"version"`
+	ServiceName ServiceName `json:"service_name"`
 }
 
 type Example struct {
