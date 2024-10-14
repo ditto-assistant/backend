@@ -20,6 +20,8 @@ import (
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/img"
 	"github.com/ditto-assistant/backend/pkg/llm"
+	"github.com/ditto-assistant/backend/pkg/llm/googai"
+	"github.com/ditto-assistant/backend/pkg/llm/openai"
 	"github.com/ditto-assistant/backend/pkg/rq"
 	"github.com/ditto-assistant/backend/pkg/search/brave"
 	"github.com/firebase/genkit/go/ai"
@@ -82,14 +84,17 @@ func main() {
 			if err != nil {
 				return "", fmt.Errorf("promptFlow: failed to get or create user: %w", err)
 			}
+			if user.Balance <= 0 {
+				return "", fmt.Errorf("balance is: %d", user.Balance)
+			}
 			if in.Model != "" {
-				if !vertexai.IsDefinedModel(in.Model) {
+				if !vertexai.IsDefinedModel(in.Model.String()) {
 					return "", fmt.Errorf("promptFlow: model not found: %s", in.Model)
 				}
 			} else {
-				in.Model = "gemini-1.5-pro"
+				in.Model = llm.ModelGemini15Flash
 			}
-			m := vertexai.Model(in.Model)
+			m := vertexai.Model(in.Model.String())
 			messages := []*ai.Message{
 				ai.NewSystemTextMessage(in.SystemPrompt),
 				ai.NewUserTextMessage(in.UserPrompt),
@@ -114,24 +119,21 @@ func main() {
 			if err != nil {
 				return "", err
 			}
-			meta, err := json.Marshal(llm.CallMetadata{
-				SystemPrompt: in.SystemPrompt,
-				UserPrompt:   in.UserPrompt,
-			})
-			if err != nil {
-				return "", fmt.Errorf("promptFlow: failed to marshal call metadata: %w", err)
-			}
-			receipt := db.Receipt{
-				UserID:    user.ID,
-				Tokens:    int64(resp.Usage.OutputTokens),
-				UsageType: "prompt",
-				Model:     in.Model,
-				Metadata:  meta,
-			}
-			if err := receipt.Insert(ctx); err != nil {
-				slog.Error("failed to insert receipt", "error", err)
-			}
-			return resp.Text(), nil
+			textOut := resp.Text()
+			go func() {
+				inputTokens := llm.EstimateTokens(in.UserPrompt) + llm.EstimateTokens(in.SystemPrompt)
+				outputTokens := llm.EstimateTokens(textOut)
+				receipt := db.Receipt{
+					UserID:       user.ID,
+					InputTokens:  int64(inputTokens),
+					OutputTokens: int64(outputTokens),
+					ServiceName:  in.Model,
+				}
+				if err := receipt.Insert(ctx); err != nil {
+					slog.Error("failed to insert receipt", "error", err)
+				}
+			}()
+			return textOut, nil
 		},
 		genkit.WithFlowAuth(firebaseAuth),
 	)
@@ -172,84 +174,41 @@ func main() {
 			return
 
 		}
-		if bod.Model == "text-embedding-3-small" {
-			// OpenAI Embeddings
-			type RequestEmbeddingOpenAI struct {
-				Input          string `json:"input"`
-				Model          string `json:"model"`
-				EncodingFormat string `json:"encoding_format"`
-			}
-			var buf bytes.Buffer
-			if err := json.NewEncoder(&buf).Encode(RequestEmbeddingOpenAI{
-				Input:          bod.Text,
-				Model:          bod.Model,
-				EncodingFormat: "float",
-			}); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/embeddings", &buf)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Authorization", "Bearer "+secr.OPENAI_EMBEDDINGS_API_KEY)
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				http.Error(w, fmt.Sprintf("failed to generate embedding: %s", resp.Status), resp.StatusCode)
-				return
-			}
-			var respBody struct {
-				Data []struct {
-					Embedding []float32 `json:"embedding"`
-				} `json:"data"`
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			if len(respBody.Data) == 0 {
-				http.Error(w, "no embeddings returned", http.StatusInternalServerError)
-				return
-			}
-			json.NewEncoder(w).Encode(respBody.Data[0].Embedding)
-			return
-		}
-
-		// Google Vertex AI Embedders
-		if bod.Model != "" {
-			if !vertexai.IsDefinedEmbedder(bod.Model) {
-				http.Error(w, fmt.Sprintf("embedFlow: model not found: %s", bod.Model), http.StatusBadRequest)
-				return
-			}
-		} else {
-			bod.Model = "text-embedding-004"
-		}
-		embedder := vertexai.Embedder(bod.Model)
-		embeddings, err := embedder.Embed(ctx, &ai.EmbedRequest{
-			Documents: []*ai.Document{
-				{
-					Content: []*ai.Part{
-						ai.NewTextPart(bod.Text),
-					},
-				},
-			},
-		})
+		user, err := db.GetOrCreateUser(ctx, bod.UserID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if len(embeddings.Embeddings) == 0 {
-			http.Error(w, "no embeddings returned", http.StatusInternalServerError)
+		if user.Balance <= 0 {
+			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 			return
 		}
-		json.NewEncoder(w).Encode(embeddings.Embeddings[0].Embedding)
+
+		var embedding llm.Embedding
+		if bod.Model == llm.ModelTextEmbedding3Small {
+			embedding, err = openai.GenerateEmbedding(ctx, bod.Text, bod.Model)
+		} else {
+			if bod.Model == "" {
+				bod.Model = llm.ModelTextEmbedding004
+			}
+			embedding, err = googai.GenerateEmbedding(ctx, bod.Text, bod.Model)
+		}
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		json.NewEncoder(w).Encode(embedding)
+
+		receipt := db.Receipt{
+			UserID:      user.ID,
+			TotalTokens: int64(llm.EstimateTokens(bod.Text)),
+			ServiceName: bod.Model,
+		}
+		if err := receipt.Insert(ctx); err != nil {
+			slog.Error("failed to insert receipt", "error", err)
+		}
 	})
 
 	customSearch, err := customsearch.NewService(ctx, option.WithAPIKey(secr.SEARCH_API_KEY))
@@ -279,9 +238,26 @@ func main() {
 		if bod.NumResults == 0 {
 			bod.NumResults = 5
 		}
+		user, err := db.GetOrCreateUser(ctx, bod.UserID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if user.Balance <= 0 {
+			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
+			return
+		}
 		search, err := brave.Search(r.Context(), bod.Query, bod.NumResults)
 		if err == nil {
 			search.Text(w)
+			receipt := db.Receipt{
+				UserID:      user.ID,
+				NumSearches: 1,
+				ServiceName: llm.SearchEngineBrave,
+			}
+			if err := receipt.Insert(ctx); err != nil {
+				slog.Error("failed to insert receipt", "error", err)
+			}
 			return
 		}
 		slog.Error("failed to search with Brave, trying Google", "error", err)
@@ -306,6 +282,14 @@ func main() {
 				i+1, item.Title, item.Link, item.Snippet,
 			)
 		}
+		receipt := db.Receipt{
+			UserID:      user.ID,
+			NumSearches: 1,
+			ServiceName: llm.SearchEngineGoogle,
+		}
+		if err := receipt.Insert(ctx); err != nil {
+			slog.Error("failed to insert receipt", "error", err)
+		}
 	})
 
 	dalleClient := &http.Client{
@@ -328,13 +312,23 @@ func main() {
 			return
 		}
 		if bod.Model == "" {
-			bod.Model = "dall-e-3"
+			bod.Model = llm.ModelDalle3
 		}
+		user, err := db.GetOrCreateUser(ctx, bod.UserID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if user.Balance <= 0 {
+			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
+			return
+		}
+
 		type RequestImageOpenAI struct {
-			Prompt string `json:"prompt"`
-			Model  string `json:"model"`
-			N      int    `json:"n"`
-			Size   string `json:"size"`
+			Prompt string          `json:"prompt"`
+			Model  llm.ServiceName `json:"model"`
+			N      int             `json:"n"`
+			Size   string          `json:"size"`
 		}
 		var buf bytes.Buffer
 		if err := json.NewEncoder(&buf).Encode(RequestImageOpenAI{
@@ -384,6 +378,14 @@ func main() {
 			return
 		}
 		fmt.Fprintln(w, respBody.Data[0].URL)
+		receipt := db.Receipt{
+			UserID:      user.ID,
+			NumImages:   1,
+			ServiceName: bod.Model,
+		}
+		if err := receipt.Insert(ctx); err != nil {
+			slog.Error("failed to insert receipt", "error", err)
+		}
 		slog.Debug("generated image", "url", respBody.Data[0].URL)
 	})
 

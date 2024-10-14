@@ -1,5 +1,6 @@
 {
   "name": "OpenSCAD Agent",
+  "service_name": "claude-3-5-sonnet",
   "version": "1.0.0",
   "description": "Examples of user prompts that require the OpenSCAD Agent tool.",
   "examples": [

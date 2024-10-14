@@ -16,7 +16,7 @@ import (
 )
 
 const baseURL = "https://us-east5-aiplatform.googleapis.com/v1/projects/%s/locations/us-east5/publishers/anthropic/models/%s:streamRawPredict"
-const model llm.ModelName = "claude-3-5-sonnet@20240620"
+const Model = llm.ModelClaude35Sonnet
 
 type Message struct {
 	Role    string    `json:"role"`
@@ -50,7 +50,7 @@ func init() {
 }
 
 func Prompt(ctx context.Context, prompt string) (<-chan string, error) {
-	url := fmt.Sprintf(baseURL, envs.GCLOUD_PROJECT, model)
+	url := fmt.Sprintf(baseURL, envs.GCLOUD_PROJECT, Model)
 	req := Request{
 		Messages: []Message{
 			{

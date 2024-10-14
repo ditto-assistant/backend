@@ -1,9 +1,8 @@
 {
   "name": "HTML Agent",
-  "model": "claude-3-5-sonnet",
+  "service_name": "claude-3-5-sonnet",
   "version": "1.0.0",
   "description": "Examples of user prompts that require the HTML agent.",
-  "costMultiplier": 1.75,
   "examples": [
     {
       "prompt": "Make an app that is a todo list for all my needs",

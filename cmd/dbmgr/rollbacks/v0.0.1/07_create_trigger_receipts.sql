@@ -1,0 +1,1 @@
+DROP TRIGGER IF EXISTS before_insert_receipts;

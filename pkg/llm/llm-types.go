@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/binary"
 	"log"
+
+	"github.com/firebase/genkit/go/ai"
 )
 
 type Embedding []float32
@@ -21,13 +23,10 @@ func (e Embedding) Binary() []byte {
 }
 
 type Tool struct {
-	Name           string  `json:"name"`
-	Description    string  `json:"description"`
-	Version        string  `json:"version"`
-	CostPerCall    float64 `json:"costPerCall"`
-	CostMultiplier float64 `json:"costMultiplier"`
-	BaseTokens     int     `json:"baseTokens"`
-	Model          string  `json:"model"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Version     string `json:"version"`
+	Model       string `json:"model"`
 }
 
 type Example struct {
@@ -37,7 +36,7 @@ type Example struct {
 	EmPromptResp Embedding `json:"-" db:"type:blob"`
 }
 
-type CallMetadata struct {
-	SystemPrompt string `json:"systemPrompt"`
-	UserPrompt   string `json:"userPrompt"`
+type GenkitMetadata struct {
+	LatencyMs float64             `json:"latencyMs"`
+	Usage     *ai.GenerationUsage `json:"usage"`
 }

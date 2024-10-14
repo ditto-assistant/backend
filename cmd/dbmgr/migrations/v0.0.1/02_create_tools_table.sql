@@ -1,9 +1,8 @@
 CREATE TABLE IF NOT EXISTS tools (
   id INTEGER PRIMARY KEY,
-  name TEXT,
+  name TEXT NOT NULL,
   description TEXT,
-  version TEXT,
-  cost_per_call REAL NOT NULL,
-  cost_multiplier REAL NOT NULL,
-  base_tokens INTEGER NOT NULL
+  version TEXT NOT NULL,
+  service_id INTEGER NOT NULL,
+  FOREIGN KEY (service_id) REFERENCES services(id)
 );
