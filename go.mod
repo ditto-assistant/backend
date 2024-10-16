@@ -7,12 +7,12 @@ require (
 	github.com/rs/cors v1.11.1
 	github.com/tursodatabase/go-libsql v0.0.0-20240916111504-922dfa87e1e6
 	golang.org/x/sync v0.8.0
-	google.golang.org/api v0.200.0
+	google.golang.org/api v0.201.0
 )
 
 require (
 	cel.dev/expr v0.16.2 // indirect
-	cloud.google.com/go v0.115.1 // indirect
+	cloud.google.com/go v0.116.0 // indirect
 	cloud.google.com/go/aiplatform v1.68.0 // indirect
 	cloud.google.com/go/auth v0.9.8 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.4 // indirect
