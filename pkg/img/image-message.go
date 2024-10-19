@@ -10,14 +10,14 @@ import (
 )
 
 func NewPart(ctx context.Context, url string) (*ai.Part, error) {
-	img, err := getBase64(ctx, url)
+	img, err := GetBase64(ctx, url)
 	if err != nil {
 		return nil, err
 	}
 	return ai.NewMediaPart("", "data:image/jpeg;base64,"+img), nil
 }
 
-func getBase64(ctx context.Context, url string) (string, error) {
+func GetBase64(ctx context.Context, url string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return "", err
