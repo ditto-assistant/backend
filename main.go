@@ -18,14 +18,13 @@ import (
 
 	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/db"
-	"github.com/ditto-assistant/backend/pkg/img"
 	"github.com/ditto-assistant/backend/pkg/llm"
+	"github.com/ditto-assistant/backend/pkg/llm/claude"
 	"github.com/ditto-assistant/backend/pkg/llm/googai"
 	"github.com/ditto-assistant/backend/pkg/llm/openai"
 	"github.com/ditto-assistant/backend/pkg/search/brave"
 	"github.com/ditto-assistant/backend/types/rp"
 	"github.com/ditto-assistant/backend/types/rq"
-	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/firebase"
 	"github.com/firebase/genkit/go/plugins/vertexai"
@@ -79,65 +78,65 @@ func main() {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
 
-	genkit.DefineStreamingFlow("v1/prompt",
-		func(ctx context.Context, in rq.PromptV1, callback func(context.Context, string) error) (string, error) {
-			user, err := db.GetOrCreateUser(ctx, in.UserID)
-			if err != nil {
-				return "", fmt.Errorf("promptFlow: failed to get or create user: %w", err)
-			}
-			if user.Balance <= 0 {
-				return "", fmt.Errorf("balance is: %d", user.Balance)
-			}
-			if in.Model != "" {
-				if !vertexai.IsDefinedModel(in.Model.String()) {
-					return "", fmt.Errorf("promptFlow: model not found: %s", in.Model)
-				}
-			} else {
-				in.Model = llm.ModelGemini15Flash
-			}
-			m := vertexai.Model(in.Model.String())
-			messages := []*ai.Message{
-				ai.NewSystemTextMessage(in.SystemPrompt),
-				ai.NewUserTextMessage(in.UserPrompt),
-			}
-			if in.ImageURL != "" {
-				imgPart, err := img.NewPart(ctx, in.ImageURL)
-				if err != nil {
-					return "", err
-				}
-				messages = append(messages, ai.NewUserMessage(imgPart))
-			}
-			cfg := &ai.GenerationCommonConfig{Temperature: 0.5}
-			resp, err := m.Generate(ctx,
-				ai.NewGenerateRequest(cfg, messages...),
-				func(ctx context.Context, grc *ai.GenerateResponseChunk) error {
-					if callback == nil {
-						return nil
-					}
-					return callback(ctx, grc.Text())
-				},
-			)
-			if err != nil {
-				return "", err
-			}
-			textOut := resp.Text()
-			go func() {
-				inputTokens := llm.EstimateTokens(in.UserPrompt) + llm.EstimateTokens(in.SystemPrompt)
-				outputTokens := llm.EstimateTokens(textOut)
-				receipt := db.Receipt{
-					UserID:       user.ID,
-					InputTokens:  int64(inputTokens),
-					OutputTokens: int64(outputTokens),
-					ServiceName:  in.Model,
-				}
-				if err := receipt.Insert(ctx); err != nil {
-					slog.Error("failed to insert receipt", "error", err)
-				}
-			}()
-			return textOut, nil
-		},
-		genkit.WithFlowAuth(firebaseAuth),
-	)
+	// genkit.DefineStreamingFlow("v1/prompt",
+	// 	func(ctx context.Context, in rq.PromptV1, callback func(context.Context, string) error) (string, error) {
+	// 		user, err := db.GetOrCreateUser(ctx, in.UserID)
+	// 		if err != nil {
+	// 			return "", fmt.Errorf("promptFlow: failed to get or create user: %w", err)
+	// 		}
+	// 		if user.Balance <= 0 {
+	// 			return "", fmt.Errorf("balance is: %d", user.Balance)
+	// 		}
+	// 		if in.Model != "" {
+	// 			if !vertexai.IsDefinedModel(in.Model.String()) {
+	// 				return "", fmt.Errorf("promptFlow: model not found: %s", in.Model)
+	// 			}
+	// 		} else {
+	// 			in.Model = llm.ModelGemini15Flash
+	// 		}
+	// 		m := vertexai.Model(in.Model.String())
+	// 		messages := []*ai.Message{
+	// 			ai.NewSystemTextMessage(in.SystemPrompt),
+	// 			ai.NewUserTextMessage(in.UserPrompt),
+	// 		}
+	// 		if in.ImageURL != "" {
+	// 			imgPart, err := img.NewPart(ctx, in.ImageURL)
+	// 			if err != nil {
+	// 				return "", err
+	// 			}
+	// 			messages = append(messages, ai.NewUserMessage(imgPart))
+	// 		}
+	// 		cfg := &ai.GenerationCommonConfig{Temperature: 0.5}
+	// 		resp, err := m.Generate(ctx,
+	// 			ai.NewGenerateRequest(cfg, messages...),
+	// 			func(ctx context.Context, grc *ai.GenerateResponseChunk) error {
+	// 				if callback == nil {
+	// 					return nil
+	// 				}
+	// 				return callback(ctx, grc.Text())
+	// 			},
+	// 		)
+	// 		if err != nil {
+	// 			return "", err
+	// 		}
+	// 		textOut := resp.Text()
+	// 		go func() {
+	// 			inputTokens := llm.EstimateTokens(in.UserPrompt) + llm.EstimateTokens(in.SystemPrompt)
+	// 			outputTokens := llm.EstimateTokens(textOut)
+	// 			receipt := db.Receipt{
+	// 				UserID:       user.ID,
+	// 				InputTokens:  int64(inputTokens),
+	// 				OutputTokens: int64(outputTokens),
+	// 				ServiceName:  in.Model,
+	// 			}
+	// 			if err := receipt.Insert(ctx); err != nil {
+	// 				slog.Error("failed to insert receipt", "error", err)
+	// 			}
+	// 		}()
+	// 		return textOut, nil
+	// 	},
+	// 	genkit.WithFlowAuth(firebaseAuth),
+	// )
 
 	go func() {
 		err := genkit.Init(ctx, &genkit.Options{FlowAddr: "-"})
@@ -156,7 +155,58 @@ func main() {
 		AllowedHeaders: []string{"*"}, // Allow all headers
 		MaxAge:         86400,         // 24 hours
 	})
-	mux := genkit.NewFlowServeMux(nil)
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
+		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var bod rq.PromptV1
+		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		err = firebaseAuth.CheckAuthPolicy(ctx, bod)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		user, err := db.GetOrCreateUser(ctx, bod.UserID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if user.Balance <= 0 {
+			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
+			return
+		}
+
+		var rsp claude.Response
+		err = rsp.Prompt(ctx, bod)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for token := range rsp.Text {
+			if token.Err != nil {
+				http.Error(w, token.Err.Error(), http.StatusInternalServerError)
+				return
+			}
+			fmt.Fprint(w, token.Ok)
+		}
+
+		receipt := db.Receipt{
+			UserID:       user.ID,
+			InputTokens:  int64(rsp.InputTokens),
+			OutputTokens: int64(rsp.OutputTokens),
+			ServiceName:  llm.ModelClaude35Sonnet,
+		}
+		if err := receipt.Insert(ctx); err != nil {
+			slog.Error("failed to insert receipt", "error", err)
+		}
+	})
 
 	mux.HandleFunc("POST /v1/embed", func(w http.ResponseWriter, r *http.Request) {
 		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
