@@ -20,6 +20,10 @@ import (
 
 const baseURL = "https://us-east5-aiplatform.googleapis.com/v1/projects/%s/locations/us-east5/publishers/anthropic/models/%s:streamRawPredict"
 const Model = llm.ModelClaude35Sonnet
+const Version = "20240620"
+const TaggedModel = llm.ModelClaude35Sonnet + "@" + Version
+
+var requestUrl string
 
 type Message struct {
 	Role    string    `json:"role"`
@@ -66,6 +70,7 @@ func init() {
 	if err != nil {
 		log.Fatalf("Error loading environment variables: %v", err)
 	}
+	requestUrl = fmt.Sprintf(baseURL, envs.GCLOUD_PROJECT, TaggedModel)
 }
 
 type Token ty.Result[string]
@@ -103,7 +108,6 @@ type EvMsgDelta struct {
 }
 
 func (rsp *Response) Prompt(ctx context.Context, prompt rq.PromptV1) error {
-	url := fmt.Sprintf(baseURL, envs.GCLOUD_PROJECT, Model)
 	messages := make([]Message, 0, 1)
 	userContentCount := 1
 	if prompt.ImageURL != "" {
@@ -142,7 +146,7 @@ func (rsp *Response) Prompt(ctx context.Context, prompt rq.PromptV1) error {
 		return fmt.Errorf("error encoding request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, &buf)
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", requestUrl, &buf)
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
 	}
