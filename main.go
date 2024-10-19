@@ -200,6 +200,7 @@ func main() {
 			return
 		}
 
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(embedding)
 
 		receipt := db.Receipt{
@@ -438,11 +439,12 @@ func main() {
 			return
 		}
 		var rsp rp.BalanceV1
-		err = db.D.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", bod.UserID).Scan(&rsp.Balance)
+		err = db.D.QueryRowContext(ctx, "SELECT balance FROM users WHERE uid = $1", bod.UserID).Scan(&rsp.Balance)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(rsp)
 	})
 
