@@ -22,8 +22,9 @@ import (
 	"github.com/ditto-assistant/backend/pkg/llm"
 	"github.com/ditto-assistant/backend/pkg/llm/googai"
 	"github.com/ditto-assistant/backend/pkg/llm/openai"
-	"github.com/ditto-assistant/backend/pkg/rq"
 	"github.com/ditto-assistant/backend/pkg/search/brave"
+	"github.com/ditto-assistant/backend/types/rp"
+	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/firebase"
@@ -400,6 +401,10 @@ func main() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		err = firebaseAuth.CheckAuthPolicy(ctx, bod)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+		}
 		if bod.K == 0 {
 			bod.K = 5
 		}
@@ -414,6 +419,31 @@ func main() {
 			fmt.Fprintf(w, "Example %d\n", i+1)
 			fmt.Fprintf(w, "User's Prompt: %s\nDitto:\n%s\n\n", example.Prompt, example.Response)
 		}
+	})
+
+	mux.HandleFunc("GET /v1/balance", func(w http.ResponseWriter, r *http.Request) {
+		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var bod rq.BalanceV1
+		if err := bod.FromQuery(r); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		err = firebaseAuth.CheckAuthPolicy(ctx, bod)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var rsp rp.BalanceV1
+		err = db.D.QueryRowContext(ctx, "SELECT balance FROM users WHERE id = $1", bod.UserID).Scan(&rsp.Balance)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(rsp)
 	})
 
 	handler := corsMiddleware.Handler(mux)

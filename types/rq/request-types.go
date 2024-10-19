@@ -1,6 +1,11 @@
 package rq
 
-import "github.com/ditto-assistant/backend/pkg/llm"
+import (
+	"errors"
+	"net/http"
+
+	"github.com/ditto-assistant/backend/pkg/llm"
+)
 
 type HasUserID interface {
 	GetUserID() string
@@ -54,3 +59,18 @@ type SearchExamplesV1 struct {
 }
 
 func (s SearchExamplesV1) GetUserID() string { return s.UserID }
+
+type BalanceV1 struct {
+	UserID string `json:"userID" form:"userID"`
+}
+
+func (b BalanceV1) GetUserID() string { return b.UserID }
+
+func (b *BalanceV1) FromQuery(r *http.Request) error {
+	uid := r.URL.Query().Get("userID")
+	if uid == "" {
+		return errors.New("userID is required")
+	}
+	b.UserID = uid
+	return nil
+}
