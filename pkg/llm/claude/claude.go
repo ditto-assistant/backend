@@ -11,7 +11,9 @@ import (
 	"net/http"
 
 	"github.com/ditto-assistant/backend/cfg/envs"
+	"github.com/ditto-assistant/backend/pkg/img"
 	"github.com/ditto-assistant/backend/pkg/llm"
+	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/ditto-assistant/backend/types/ty"
 	"golang.org/x/oauth2/google"
 )
@@ -25,8 +27,9 @@ type Message struct {
 }
 
 type Content struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
+	Type   string            `json:"type"`
+	Text   string            `json:"text,omitempty"`
+	Source map[string]string `json:"source,omitempty"`
 }
 
 type Request struct {
@@ -34,6 +37,7 @@ type Request struct {
 	MaxTokens        int       `json:"max_tokens"`
 	Stream           bool      `json:"stream"`
 	AnthropicVersion string    `json:"anthropic_version"`
+	System           string    `json:"system,omitempty"`
 }
 
 // event: message_start
@@ -98,22 +102,40 @@ type EvMsgDelta struct {
 	} `json:"usage"`
 }
 
-func (rsp *Response) Prompt(ctx context.Context, prompt string) error {
+func (rsp *Response) Prompt(ctx context.Context, prompt rq.PromptV1) error {
 	url := fmt.Sprintf(baseURL, envs.GCLOUD_PROJECT, Model)
-	req := Request{
-		Messages: []Message{
-			{
-				Role: "user",
-				Content: []Content{
-					{Type: "text", Text: prompt},
-				},
+	messages := make([]Message, 0, 1)
+	userContentCount := 1
+	if prompt.ImageURL != "" {
+		userContentCount++
+	}
+	userMessage := Message{Role: "user", Content: make([]Content, 0, userContentCount)}
+	if prompt.ImageURL != "" {
+		base64Image, err := img.GetBase64(ctx, prompt.ImageURL)
+		if err != nil {
+			return fmt.Errorf("error getting base64 image: %w", err)
+		}
+		userMessage.Content = append(userMessage.Content, Content{
+			Type: "image",
+			Source: map[string]string{
+				"type":       "base64",
+				"media_type": "image/jpeg", // Adjust this if needed based on the actual image type
+				"data":       base64Image,
 			},
-		},
+		})
+	}
+	userMessage.Content = append(userMessage.Content, Content{
+		Type: "text",
+		Text: prompt.UserPrompt,
+	})
+	messages = append(messages, userMessage)
+	req := Request{
+		Messages:         messages,
 		MaxTokens:        1024,
 		Stream:           true,
 		AnthropicVersion: "vertex-2023-10-16",
+		System:           prompt.SystemPrompt,
 	}
-
 	var buf bytes.Buffer
 	err := json.NewEncoder(&buf).Encode(req)
 	if err != nil {
