@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/db"
@@ -22,6 +21,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/llm/claude"
 	"github.com/ditto-assistant/backend/pkg/llm/googai"
 	"github.com/ditto-assistant/backend/pkg/llm/openai"
+	"github.com/ditto-assistant/backend/pkg/numfmt"
 	"github.com/ditto-assistant/backend/pkg/search/brave"
 	"github.com/ditto-assistant/backend/types/rp"
 	"github.com/ditto-assistant/backend/types/rq"
@@ -344,9 +344,6 @@ func main() {
 		}
 	})
 
-	dalleClient := &http.Client{
-		Timeout: 20 * time.Second,
-	}
 	mux.HandleFunc("POST /v1/generate-image", func(w http.ResponseWriter, r *http.Request) {
 		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
 		if err != nil {
@@ -402,7 +399,7 @@ func main() {
 
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+secr.OPENAI_DALLE_API_KEY)
-		resp, err := dalleClient.Do(req)
+		resp, err := llm.HttpClient.Do(req)
 		if err != nil {
 			slog.Error("failed to send image request", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -488,12 +485,14 @@ func main() {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		var rsp rp.BalanceV1
-		err = db.D.QueryRowContext(ctx, "SELECT balance FROM users WHERE uid = $1", bod.UserID).Scan(&rsp.Balance)
+		var bal int64
+		err = db.D.QueryRowContext(ctx, "SELECT balance FROM users WHERE uid = $1", bod.UserID).Scan(&bal)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		var rsp rp.BalanceV1
+		rsp.Balance = numfmt.FormatLargeNumber(bal)
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(rsp)
 	})
