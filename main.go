@@ -485,14 +485,23 @@ func main() {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		var bal int64
-		err = db.D.QueryRowContext(ctx, "SELECT balance FROM users WHERE uid = $1", bod.UserID).Scan(&bal)
+		var q struct {
+			Balance   int64   `db:"balance"`
+			ImgTokens float64 `db:"base_cost_per_call"`
+		}
+		err = db.D.QueryRowContext(ctx, `
+			SELECT users.balance, ROUND(users.balance / ((svc.base_cost_per_call+svc.base_cost_per_image) * dtpd.count))
+			FROM users, services AS svc, tokens_per_dollar AS dtpd
+			WHERE uid = $1 AND svc.name = 'dall-e-3' AND dtpd.name = 'ditto'
+		`, bod.UserID).Scan(&q.Balance, &q.ImgTokens)
 		if err != nil {
+			slog.Error("failed to get balance", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		var rsp rp.BalanceV1
-		rsp.Balance = numfmt.FormatLargeNumber(bal)
+		rsp.Balance = numfmt.FormatLargeNumber(q.Balance)
+		rsp.Images = numfmt.FormatLargeNumber(int64(q.ImgTokens))
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(rsp)
 	})

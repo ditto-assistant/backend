@@ -107,6 +107,8 @@ type EvMsgDelta struct {
 	} `json:"usage"`
 }
 
+// TODO: Add Prompt options, such as message array, last message role is assistant, etc.
+
 func (rsp *Response) Prompt(ctx context.Context, prompt rq.PromptV1) error {
 	messages := make([]Message, 0, 1)
 	userContentCount := 1
@@ -122,8 +124,9 @@ func (rsp *Response) Prompt(ctx context.Context, prompt rq.PromptV1) error {
 		userMessage.Content = append(userMessage.Content, Content{
 			Type: "image",
 			Source: map[string]string{
-				"type":       "base64",
-				"media_type": "image/jpeg", // Adjust this if needed based on the actual image type
+				"type": "base64",
+				// TODO: DETECT IMAGE TYPE
+				"media_type": "image/png", // Adjust this if needed based on the actual image type
 				"data":       base64Image,
 			},
 		})
