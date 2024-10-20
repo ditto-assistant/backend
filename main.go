@@ -490,9 +490,9 @@ func main() {
 			ImgTokens float64 `db:"base_cost_per_call"`
 		}
 		err = db.D.QueryRowContext(ctx, `
-			SELECT users.balance, ROUND(users.balance / ((svc.base_cost_per_call+svc.base_cost_per_image) * dtpd.count))
-			FROM users, services AS svc, tokens_per_dollar AS dtpd
-			WHERE uid = $1 AND svc.name = 'dall-e-3' AND dtpd.name = 'ditto'
+			SELECT users.balance, ROUND(users.balance / ((svc.base_cost_per_call+svc.base_cost_per_image) * tpd.count))
+			FROM users, services AS svc, tokens_per_dollar AS tpd
+			WHERE uid = $1 AND svc.name = 'dall-e-3' AND tpd.name = 'ditto'
 		`, bod.UserID).Scan(&q.Balance, &q.ImgTokens)
 		if err != nil {
 			slog.Error("failed to get balance", "error", err)
