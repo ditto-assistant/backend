@@ -13,14 +13,13 @@ import (
 type User struct {
 	ID      int64
 	UID     string
-	Name    string
 	Balance int64
 }
 
 // Insert inserts a new user into the database.
 // It updates the User's ID with the ID from the database.
 func (u *User) Insert(ctx context.Context) error {
-	res, err := D.ExecContext(ctx, "INSERT INTO users (uid, name, balance) VALUES (?, ?, ?)", u.UID, u.Name, u.Balance)
+	res, err := D.ExecContext(ctx, "INSERT INTO users (uid, balance) VALUES (?, ?)", u.UID, u.Balance)
 	if err != nil {
 		return err
 	}
@@ -36,12 +35,32 @@ func (u *User) Insert(ctx context.Context) error {
 // If the user does not exist, it creates a new user.
 func GetOrCreateUser(ctx context.Context, uid string) (User, error) {
 	var u User
-	err := D.QueryRowContext(ctx, "SELECT id, uid, name, balance FROM users WHERE uid = ?", uid).Scan(&u.ID, &u.UID, &u.Name, &u.Balance)
+	err := D.QueryRowContext(ctx, "SELECT id, uid, balance FROM users WHERE uid = ?", uid).Scan(&u.ID, &u.UID, &u.Balance)
 	if err == sql.ErrNoRows {
 		u = User{UID: uid}
 		err = u.Insert(ctx)
 	}
 	return u, err
+}
+
+// InitUser sets the user's balance to the given value.
+// If the user does not exist, it creates a new user.
+func InitUser(ctx context.Context, uid string, balance int64) error {
+	var u User
+	err := D.QueryRowContext(ctx, "SELECT id, balance FROM users WHERE uid = ?", uid).Scan(&u.ID, &u.Balance)
+	if err == sql.ErrNoRows { // User doesn't exist, create a new one
+		u.UID = uid
+		u.Balance = balance
+		return u.Insert(ctx)
+	} else if err != nil {
+		return err
+	}
+	// User exists, update the balance
+	_, err = D.ExecContext(ctx, "UPDATE users SET balance = ? WHERE id = ?", balance, u.ID)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 type Service struct {

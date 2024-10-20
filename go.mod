@@ -3,6 +3,7 @@ module github.com/ditto-assistant/backend
 go 1.23.1
 
 require (
+	firebase.google.com/go/v4 v4.14.1
 	github.com/firebase/genkit/go v0.1.1
 	github.com/rs/cors v1.11.1
 	github.com/stretchr/testify v1.9.0
@@ -25,7 +26,6 @@ require (
 	cloud.google.com/go/monitoring v1.21.1 // indirect
 	cloud.google.com/go/storage v1.44.0 // indirect
 	cloud.google.com/go/vertexai v0.13.1 // indirect
-	firebase.google.com/go/v4 v4.14.1 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.24.2 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.48.2 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.48.2 // indirect

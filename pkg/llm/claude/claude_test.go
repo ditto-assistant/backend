@@ -80,7 +80,7 @@ func TestImage(t *testing.T) {
 		t.Skip("skipping image test in short mode")
 	}
 	ctx := context.Background()
-	prompt := "What do you see in this image?"
+	prompt := "Describe the damage in this image and estimate the cost to repair it."
 
 	var rsp claude.Response
 	err := rsp.Prompt(ctx, rq.PromptV1{

@@ -11,25 +11,20 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
+	firebase "firebase.google.com/go/v4"
 	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/llm"
+	"github.com/ditto-assistant/backend/pkg/numfmt"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/plugins/vertexai"
 	_ "github.com/tursodatabase/go-libsql"
 	"golang.org/x/sync/errgroup"
-)
-
-var (
-	dittoEnv envs.Env
-	folder   string
-	dryRun   bool
-	query    string
-	mode     Mode
 )
 
 type Mode int
@@ -40,10 +35,28 @@ const (
 	ModeRollback
 	ModeSearch
 	ModeIngest
+	ModeFirestore
+	ModeSyncBalance
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	var (
+		dittoEnv envs.Env
+		folder   string
+		dryRun   bool
+		query    string
+		mode     Mode
+		userID   string
+	)
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return a
+		},
+	})))
 	var shutdown sync.WaitGroup
 	defer shutdown.Wait()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -104,6 +117,23 @@ func main() {
 		query = strings.Join(searchFlags.Args(), " ")
 		slog.Debug("search mode", "query", query, "env", dittoEnv)
 
+	case "firestore":
+		mode = ModeFirestore
+		firestoreFlags := flag.NewFlagSet("firestore", flag.ExitOnError)
+		firestoreFlags.StringVar(&userID, "uid", "", "user ID")
+		firestoreFlags.Parse(globalFlags.Args()[1:])
+
+	case "sync":
+		if globalFlags.NArg() < 2 {
+			log.Fatalf("usage: dbmgr [-env <environment>] sync <sync_type>")
+		}
+		switch globalFlags.Arg(1) {
+		case "bals":
+			mode = ModeSyncBalance
+		default:
+			log.Fatalf("unknown sync type: %s", globalFlags.Arg(1))
+		}
+
 	default:
 		log.Fatalf("unknown command: %s", subcommand)
 	}
@@ -132,7 +162,109 @@ func main() {
 		if err := testSearch(ctx, query); err != nil {
 			log.Fatalf("failed to test search: %s", err)
 		}
+	case ModeFirestore:
+		if err := firestorePrintUser(ctx, userID); err != nil {
+			log.Fatalf("failed to test firestore: %s", err)
+		}
+	case ModeSyncBalance:
+		if err := syncBalance(ctx); err != nil {
+			log.Fatalf("failed to sync balance: %s", err)
+		}
 	}
+}
+
+func syncBalance(ctx context.Context) error {
+	slog.Debug("syncing balance from firestore to database")
+	count, err := db.GetDittoTokensPerDollar(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting ditto tokens per dollar: %w", err)
+	}
+	slog.Debug("ditto tokens per dollar", "count", numfmt.FormatLargeNumber(count))
+	app, err := firebase.NewApp(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("error creating firebase app: %w", err)
+	}
+	firestore, err := app.Firestore(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting firestore client: %w", err)
+	}
+
+	balanceQuery := firestore.CollectionGroup("balance")
+	docs, err := balanceQuery.Documents(ctx).GetAll()
+	if err != nil {
+		return fmt.Errorf("error getting balance documents: %w", err)
+	}
+
+	for _, doc := range docs {
+		var userData struct {
+			Balance float64 `firestore:"balance"`
+		}
+		if err := doc.DataTo(&userData); err != nil {
+			slog.Error("Error unmarshaling Firestore document", "docID", doc.Ref.ID, "error", err)
+			continue
+		}
+
+		userID := doc.Ref.Parent.Parent.ID
+		newBalance := int64(userData.Balance * float64(count))
+		if err := db.InitUser(ctx, userID, newBalance); err != nil {
+			return fmt.Errorf("error initializing user: %w", err)
+		}
+		slog.Info("User balance synced",
+			"userID", userID,
+			"user_dollars", strconv.FormatFloat(userData.Balance, 'f', 2, 64),
+			"user_tokens", numfmt.FormatLargeNumber(newBalance),
+		)
+	}
+
+	return nil
+}
+
+func firestorePrintUser(ctx context.Context, userID string) error {
+	app, err := firebase.NewApp(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("error creating firebase app: %w", err)
+	}
+	firestore, err := app.Firestore(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting firestore client: %w", err)
+	}
+
+	// getBalanceFromFirestore retrieves the balance for a given user ID from Firestore
+	// It returns the balance as a float64, or false if the user doesn't exist or an error occurs
+	balanceRef := firestore.Collection("users").Doc(userID).Collection("balance")
+	docs, err := balanceRef.Documents(ctx).GetAll()
+	if err != nil {
+		slog.Error("Error getting documents from Firestore users collection", "error", err)
+		return fmt.Errorf("error getting documents from Firestore: %w", err)
+	}
+
+	if len(docs) == 0 {
+		slog.Info("User doesn't exist in Firestore", "userID", userID)
+		return nil
+	}
+
+	userDoc := docs[0]
+	var userData struct {
+		Balance float64 `firestore:"balance"`
+	}
+	if err := userDoc.DataTo(&userData); err != nil {
+		slog.Error("Error unmarshaling Firestore document", "error", err)
+		return fmt.Errorf("error unmarshaling Firestore document: %w", err)
+	}
+
+	if userData.Balance != 0 {
+		slog.Info("Retrieved user balance from Firestore", "userID", userID, "balance", userData.Balance)
+	} else {
+		slog.Info("User balance not found or zero", "userID", userID)
+	}
+	count, err := db.GetDittoTokensPerDollar(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting ditto tokens per dollar: %w", err)
+	}
+	newBalance := int64(userData.Balance * float64(count))
+	slog.Info("User tokens", "ditto per dollar", count, "user_dollars", userData.Balance, "user_tokens", numfmt.FormatLargeNumber(newBalance))
+
+	return nil
 }
 
 func testSearch(ctx context.Context, query string) error {
@@ -229,7 +361,7 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 	group, embedCtx := errgroup.WithContext(ctx)
 	for _, tool := range fileSlice {
 		group.Go(func() error {
-			if err := tool.EmbedBatch(embedCtx, embedder); err != nil {
+			if err := tool.Embed(embedCtx, embedder); err != nil {
 				return fmt.Errorf("error embedding tool: %w", err)
 			}
 			return nil
@@ -295,8 +427,8 @@ type ToolExamples struct {
 	Examples []llm.Example `json:"examples"`
 }
 
-// EmbedBatch embeds all the examples in the tool example.
-func (te ToolExamples) EmbedBatch(ctx context.Context, embedder ai.Embedder) error {
+// Embed embeds all the examples in the tool example.
+func (te ToolExamples) Embed(ctx context.Context, embedder ai.Embedder) error {
 	docs := make([]*ai.Document, 0, len(te.Examples)*2)
 	for _, example := range te.Examples {
 		// Embed the prompt

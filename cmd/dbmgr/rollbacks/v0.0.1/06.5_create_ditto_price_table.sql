@@ -1,3 +1,3 @@
-DROP TABLE IF EXISTS ditto_tokens_per_dollar;
+DROP TABLE IF EXISTS tokens_per_dollar;
 
-DROP TRIGGER IF EXISTS update_ditto_tokens_per_dollar_timestamp;
+DROP TRIGGER IF EXISTS update_tokens_per_dollar_timestamp;
