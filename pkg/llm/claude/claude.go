@@ -138,7 +138,7 @@ func (rsp *Response) Prompt(ctx context.Context, prompt rq.PromptV1) error {
 	messages = append(messages, userMessage)
 	req := Request{
 		Messages:         messages,
-		MaxTokens:        1024,
+		MaxTokens:        8192,
 		Stream:           true,
 		AnthropicVersion: "vertex-2023-10-16",
 		System:           prompt.SystemPrompt,
