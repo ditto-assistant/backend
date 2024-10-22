@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/cfg/secr"
@@ -23,6 +24,8 @@ func Setup(ctx context.Context, shutdown *sync.WaitGroup) (err error) {
 	if err != nil {
 		return
 	}
+	D.SetConnMaxIdleTime(9 * time.Second)
+
 	go func() {
 		<-ctx.Done()
 		err := D.Close()
