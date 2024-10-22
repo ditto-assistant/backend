@@ -17,7 +17,7 @@ func Setup(ctx context.Context, shutdown *sync.WaitGroup) (err error) {
 	shutdown.Add(1)
 	dbUrl := envs.DB_URL_DITTO
 	if envs.DITTO_ENV != envs.EnvLocal {
-		dbUrl += "?authToken=" + secr.TURSO_AUTH_TOKEN
+		dbUrl += "?authToken=" + secr.TURSO_AUTH_TOKEN.String()
 	}
 	D, err = sql.Open("libsql", dbUrl)
 	if err != nil {

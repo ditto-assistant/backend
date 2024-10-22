@@ -12,22 +12,25 @@ import (
 	"google.golang.org/api/secretmanager/v1"
 )
 
+type SecretID string
+
 // Secrets
 var (
-	BRAVE_SEARCH_API_KEY      string
-	SEARCH_API_KEY            string
-	OPENAI_DALLE_API_KEY      string
-	OPENAI_EMBEDDINGS_API_KEY string
-	LIBSQL_ENCRYPTION_KEY     string
-	TURSO_AUTH_TOKEN          string
+	BRAVE_SEARCH_API_KEY      SecretID
+	SEARCH_API_KEY            SecretID
+	OPENAI_DALLE_API_KEY      SecretID
+	OPENAI_EMBEDDINGS_API_KEY SecretID
+	LIBSQL_ENCRYPTION_KEY     SecretID
+	TURSO_AUTH_TOKEN          SecretID
 )
 
-func fetchSecret(
+func (s SecretID) String() string { return string(s) }
+
+func (secPtr *SecretID) fetch(
 	ctx context.Context,
 	group *errgroup.Group,
 	sm *secretmanager.Service,
 	secName string,
-	secPtr *string,
 ) {
 	group.Go(func() error {
 		var sb strings.Builder
@@ -45,7 +48,7 @@ func fetchSecret(
 		if err != nil {
 			return fmt.Errorf("failed to decode secret %s: %w", sid, err)
 		}
-		*secPtr = string(decoded)
+		*secPtr = SecretID(decoded)
 		slog.Debug("fetched secret", "id", sid)
 		return nil
 	})
@@ -60,16 +63,16 @@ func Setup(ctx context.Context) error {
 		return fmt.Errorf("failed to load environment variables: %w", err)
 	}
 	group, ctx := errgroup.WithContext(ctx)
-	fetchSecret(ctx, group, sm, "BRAVE_SEARCH_API_KEY", &BRAVE_SEARCH_API_KEY)
-	fetchSecret(ctx, group, sm, "SEARCH_API_KEY", &SEARCH_API_KEY)
-	fetchSecret(ctx, group, sm, "OPENAI_DALLE_API_KEY", &OPENAI_DALLE_API_KEY)
-	fetchSecret(ctx, group, sm, "LIBSQL_ENCRYPTION_KEY", &LIBSQL_ENCRYPTION_KEY)
-	fetchSecret(ctx, group, sm, "OPENAI_EMBEDDINGS_API_KEY", &OPENAI_EMBEDDINGS_API_KEY)
+	BRAVE_SEARCH_API_KEY.fetch(ctx, group, sm, "BRAVE_SEARCH_API_KEY")
+	SEARCH_API_KEY.fetch(ctx, group, sm, "SEARCH_API_KEY")
+	OPENAI_DALLE_API_KEY.fetch(ctx, group, sm, "OPENAI_DALLE_API_KEY")
+	LIBSQL_ENCRYPTION_KEY.fetch(ctx, group, sm, "LIBSQL_ENCRYPTION_KEY")
+	OPENAI_EMBEDDINGS_API_KEY.fetch(ctx, group, sm, "OPENAI_EMBEDDINGS_API_KEY")
 	switch envs.DITTO_ENV {
 	case envs.EnvStaging:
-		fetchSecret(ctx, group, sm, "STAGING_TURSO_AUTH_TOKEN", &TURSO_AUTH_TOKEN)
+		TURSO_AUTH_TOKEN.fetch(ctx, group, sm, "STAGING_TURSO_AUTH_TOKEN")
 	case envs.EnvProd:
-		fetchSecret(ctx, group, sm, "PROD_TURSO_AUTH_TOKEN", &TURSO_AUTH_TOKEN)
+		TURSO_AUTH_TOKEN.fetch(ctx, group, sm, "PROD_TURSO_AUTH_TOKEN")
 	}
 	if err := group.Wait(); err != nil {
 		return fmt.Errorf("failed to fetch secrets: %w", err)
