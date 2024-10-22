@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/db"
@@ -199,15 +201,19 @@ func main() {
 			fmt.Fprint(w, token.Ok)
 		}
 
-		receipt := db.Receipt{
-			UserID:       user.ID,
-			InputTokens:  int64(rsp.InputTokens),
-			OutputTokens: int64(rsp.OutputTokens),
-			ServiceName:  llm.ModelClaude35Sonnet,
-		}
-		if err := receipt.Insert(ctx); err != nil {
-			slog.Error("failed to insert receipt", "error", err)
-		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			receipt := db.Receipt{
+				UserID:       user.ID,
+				InputTokens:  int64(rsp.InputTokens),
+				OutputTokens: int64(rsp.OutputTokens),
+				ServiceName:  llm.ModelClaude35Sonnet,
+			}
+			if err := receipt.Insert(ctx); err != nil {
+				slog.Error("failed to insert receipt", "error", err)
+			}
+		}()
 	})
 
 	mux.HandleFunc("POST /v1/embed", func(w http.ResponseWriter, r *http.Request) {
@@ -255,14 +261,18 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(embedding)
 
-		receipt := db.Receipt{
-			UserID:      user.ID,
-			TotalTokens: int64(llm.EstimateTokens(bod.Text)),
-			ServiceName: bod.Model,
-		}
-		if err := receipt.Insert(ctx); err != nil {
-			slog.Error("failed to insert receipt", "error", err)
-		}
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			receipt := db.Receipt{
+				UserID:      user.ID,
+				TotalTokens: int64(llm.EstimateTokens(bod.Text)),
+				ServiceName: bod.Model,
+			}
+			if err := receipt.Insert(ctx); err != nil {
+				slog.Error("failed to insert receipt", "error", err)
+			}
+		}()
 	})
 
 	customSearch, err := customsearch.NewService(ctx, option.WithAPIKey(secr.SEARCH_API_KEY))
@@ -304,14 +314,19 @@ func main() {
 		search, err := brave.Search(r.Context(), bod.Query, bod.NumResults)
 		if err == nil {
 			search.Text(w)
-			receipt := db.Receipt{
-				UserID:      user.ID,
-				NumSearches: 1,
-				ServiceName: llm.SearchEngineBrave,
-			}
-			if err := receipt.Insert(ctx); err != nil {
-				slog.Error("failed to insert receipt", "error", err)
-			}
+
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				receipt := db.Receipt{
+					UserID:      user.ID,
+					NumSearches: 1,
+					ServiceName: llm.SearchEngineBrave,
+				}
+				if err := receipt.Insert(ctx); err != nil {
+					slog.Error("failed to insert receipt", "error", err)
+				}
+			}()
 			return
 		}
 		slog.Error("failed to search with Brave, trying Google", "error", err)
@@ -336,14 +351,19 @@ func main() {
 				i+1, item.Title, item.Link, item.Snippet,
 			)
 		}
-		receipt := db.Receipt{
-			UserID:      user.ID,
-			NumSearches: 1,
-			ServiceName: llm.SearchEngineGoogle,
-		}
-		if err := receipt.Insert(ctx); err != nil {
-			slog.Error("failed to insert receipt", "error", err)
-		}
+
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			receipt := db.Receipt{
+				UserID:      user.ID,
+				NumSearches: 1,
+				ServiceName: llm.SearchEngineGoogle,
+			}
+			if err := receipt.Insert(ctx); err != nil {
+				slog.Error("failed to insert receipt", "error", err)
+			}
+		}()
 	})
 
 	mux.HandleFunc("POST /v1/generate-image", func(w http.ResponseWriter, r *http.Request) {
@@ -429,14 +449,19 @@ func main() {
 			return
 		}
 		fmt.Fprintln(w, respBody.Data[0].URL)
-		receipt := db.Receipt{
-			UserID:      user.ID,
-			NumImages:   1,
-			ServiceName: bod.Model,
-		}
-		if err := receipt.Insert(ctx); err != nil {
-			slog.Error("failed to insert receipt", "error", err)
-		}
+
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			receipt := db.Receipt{
+				UserID:      user.ID,
+				NumImages:   1,
+				ServiceName: bod.Model,
+			}
+			if err := receipt.Insert(ctx); err != nil {
+				slog.Error("failed to insert receipt", "error", err)
+			}
+		}()
 		slog.Debug("generated image", "url", respBody.Data[0].URL)
 	})
 
@@ -502,6 +527,15 @@ func main() {
 			  AND tpd.name = 'ditto'
 		`, bod.UserID).Scan(&q.Balance, &q.ImgTokens)
 		if err != nil {
+			if err == sql.ErrNoRows {
+				slog.Warn("user not found, 0 balance", "uid", bod.UserID)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(rp.BalanceV1{
+					Balance: "0",
+					Images:  "0",
+				})
+				return
+			}
 			slog.Error("failed to get balance", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
