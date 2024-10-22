@@ -37,26 +37,26 @@ import (
 )
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
+	bgCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var shutdown sync.WaitGroup
+	var shutdownWG sync.WaitGroup
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGINT)
 
-	if err := vertexai.Init(ctx, &vertexai.Config{
+	if err := vertexai.Init(bgCtx, &vertexai.Config{
 		ProjectID: "ditto-app-dev",
 		Location:  "us-central1",
 	}); err != nil {
 		log.Fatal(err)
 	}
-	if err := secr.Setup(ctx); err != nil {
+	if err := secr.Setup(bgCtx); err != nil {
 		log.Fatalf("failed to initialize secrets: %s", err)
 	}
-	if err := db.Setup(ctx, &shutdown); err != nil {
+	if err := db.Setup(bgCtx, &shutdownWG); err != nil {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
 
-	firebaseAuth, err := firebase.NewAuth(ctx, func(authContext genkit.AuthContext, input any) error {
+	firebaseAuth, err := firebase.NewAuth(bgCtx, func(authContext genkit.AuthContext, input any) error {
 		in, ok := input.(rq.HasUserID) // The type must match the input type of the flow.
 		if !ok {
 			return fmt.Errorf("request body type is incorrect: %T", input)
@@ -141,7 +141,7 @@ func main() {
 	// )
 
 	go func() {
-		err := genkit.Init(ctx, &genkit.Options{FlowAddr: "-"})
+		err := genkit.Init(bgCtx, &genkit.Options{FlowAddr: "-"})
 		if err != nil {
 			log.Fatalf("failed to initialize genkit: %v", err)
 		}
@@ -201,8 +201,10 @@ func main() {
 			fmt.Fprint(w, token.Ok)
 		}
 
+		shutdownWG.Add(1)
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer shutdownWG.Done()
+			ctx, cancel := context.WithTimeout(bgCtx, 15*time.Second)
 			defer cancel()
 			receipt := db.Receipt{
 				UserID:       user.ID,
@@ -261,8 +263,10 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(embedding)
 
+		shutdownWG.Add(1)
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer shutdownWG.Done()
+			ctx, cancel := context.WithTimeout(bgCtx, 15*time.Second)
 			defer cancel()
 			receipt := db.Receipt{
 				UserID:      user.ID,
@@ -275,7 +279,7 @@ func main() {
 		}()
 	})
 
-	customSearch, err := customsearch.NewService(ctx, option.WithAPIKey(secr.SEARCH_API_KEY))
+	customSearch, err := customsearch.NewService(bgCtx, option.WithAPIKey(secr.SEARCH_API_KEY))
 	if err != nil {
 		log.Fatalf("failed to initialize custom search: %s", err)
 	}
@@ -315,8 +319,10 @@ func main() {
 		if err == nil {
 			search.Text(w)
 
+			shutdownWG.Add(1)
 			go func() {
-				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer shutdownWG.Done()
+				ctx, cancel := context.WithTimeout(bgCtx, 15*time.Second)
 				defer cancel()
 				receipt := db.Receipt{
 					UserID:      user.ID,
@@ -352,8 +358,10 @@ func main() {
 			)
 		}
 
+		shutdownWG.Add(1)
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer shutdownWG.Done()
+			ctx, cancel := context.WithTimeout(bgCtx, 15*time.Second)
 			defer cancel()
 			receipt := db.Receipt{
 				UserID:      user.ID,
@@ -450,8 +458,10 @@ func main() {
 		}
 		fmt.Fprintln(w, respBody.Data[0].URL)
 
+		shutdownWG.Add(1)
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer shutdownWG.Done()
+			ctx, cancel := context.WithTimeout(bgCtx, 15*time.Second)
 			defer cancel()
 			receipt := db.Receipt{
 				UserID:      user.ID,
@@ -557,7 +567,7 @@ func main() {
 		select {
 		case sig := <-sigChan:
 			slog.Info("Received SIG; shutting down", "signal", sig)
-			server.Shutdown(ctx)
+			server.Shutdown(bgCtx)
 		}
 	}()
 
@@ -566,6 +576,6 @@ func main() {
 		log.Fatalf("Server error: %v", err)
 	}
 	cancel()
-	shutdown.Wait()
+	shutdownWG.Wait()
 	os.Exit(0)
 }
