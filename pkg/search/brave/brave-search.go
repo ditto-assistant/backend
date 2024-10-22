@@ -9,7 +9,7 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/ditto-assistant/backend/pkg/secr"
+	"github.com/ditto-assistant/backend/cfg/secr"
 )
 
 const basedURL = "https://api.search.brave.com/res/v1/web/search"

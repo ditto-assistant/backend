@@ -14,14 +14,17 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
-	"time"
 
+	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/db"
-	"github.com/ditto-assistant/backend/pkg/img"
-	"github.com/ditto-assistant/backend/pkg/rq"
+	"github.com/ditto-assistant/backend/pkg/llm"
+	"github.com/ditto-assistant/backend/pkg/llm/claude"
+	"github.com/ditto-assistant/backend/pkg/llm/googai"
+	"github.com/ditto-assistant/backend/pkg/llm/openai"
+	"github.com/ditto-assistant/backend/pkg/numfmt"
 	"github.com/ditto-assistant/backend/pkg/search/brave"
-	"github.com/ditto-assistant/backend/pkg/secr"
-	"github.com/firebase/genkit/go/ai"
+	"github.com/ditto-assistant/backend/types/rp"
+	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/firebase/genkit/go/genkit"
 	"github.com/firebase/genkit/go/plugins/firebase"
 	"github.com/firebase/genkit/go/plugins/vertexai"
@@ -75,44 +78,65 @@ func main() {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
 
-	genkit.DefineStreamingFlow("v1/prompt",
-		func(ctx context.Context, in rq.PromptV1, callback func(context.Context, string) error) (string, error) {
-			if in.Model != "" {
-				if !vertexai.IsDefinedModel(in.Model) {
-					return "", fmt.Errorf("promptFlow: model not found: %s", in.Model)
-				}
-			} else {
-				in.Model = "gemini-1.5-pro"
-			}
-			m := vertexai.Model(in.Model)
-			messages := []*ai.Message{
-				ai.NewSystemTextMessage(in.SystemPrompt),
-				ai.NewUserTextMessage(in.UserPrompt),
-			}
-			if in.ImageURL != "" {
-				imgPart, err := img.NewPart(ctx, in.ImageURL)
-				if err != nil {
-					return "", err
-				}
-				messages = append(messages, ai.NewUserMessage(imgPart))
-			}
-			cfg := &ai.GenerationCommonConfig{Temperature: 0.5}
-			resp, err := m.Generate(ctx,
-				ai.NewGenerateRequest(cfg, messages...),
-				func(ctx context.Context, grc *ai.GenerateResponseChunk) error {
-					if callback == nil {
-						return nil
-					}
-					return callback(ctx, grc.Text())
-				},
-			)
-			if err != nil {
-				return "", err
-			}
-			return resp.Text(), nil
-		},
-		genkit.WithFlowAuth(firebaseAuth),
-	)
+	// genkit.DefineStreamingFlow("v1/prompt",
+	// 	func(ctx context.Context, in rq.PromptV1, callback func(context.Context, string) error) (string, error) {
+	// 		user, err := db.GetOrCreateUser(ctx, in.UserID)
+	// 		if err != nil {
+	// 			return "", fmt.Errorf("promptFlow: failed to get or create user: %w", err)
+	// 		}
+	// 		if user.Balance <= 0 {
+	// 			return "", fmt.Errorf("balance is: %d", user.Balance)
+	// 		}
+	// 		if in.Model != "" {
+	// 			if !vertexai.IsDefinedModel(in.Model.String()) {
+	// 				return "", fmt.Errorf("promptFlow: model not found: %s", in.Model)
+	// 			}
+	// 		} else {
+	// 			in.Model = llm.ModelGemini15Flash
+	// 		}
+	// 		m := vertexai.Model(in.Model.String())
+	// 		messages := []*ai.Message{
+	// 			ai.NewSystemTextMessage(in.SystemPrompt),
+	// 			ai.NewUserTextMessage(in.UserPrompt),
+	// 		}
+	// 		if in.ImageURL != "" {
+	// 			imgPart, err := img.NewPart(ctx, in.ImageURL)
+	// 			if err != nil {
+	// 				return "", err
+	// 			}
+	// 			messages = append(messages, ai.NewUserMessage(imgPart))
+	// 		}
+	// 		cfg := &ai.GenerationCommonConfig{Temperature: 0.5}
+	// 		resp, err := m.Generate(ctx,
+	// 			ai.NewGenerateRequest(cfg, messages...),
+	// 			func(ctx context.Context, grc *ai.GenerateResponseChunk) error {
+	// 				if callback == nil {
+	// 					return nil
+	// 				}
+	// 				return callback(ctx, grc.Text())
+	// 			},
+	// 		)
+	// 		if err != nil {
+	// 			return "", err
+	// 		}
+	// 		textOut := resp.Text()
+	// 		go func() {
+	// 			inputTokens := llm.EstimateTokens(in.UserPrompt) + llm.EstimateTokens(in.SystemPrompt)
+	// 			outputTokens := llm.EstimateTokens(textOut)
+	// 			receipt := db.Receipt{
+	// 				UserID:       user.ID,
+	// 				InputTokens:  int64(inputTokens),
+	// 				OutputTokens: int64(outputTokens),
+	// 				ServiceName:  in.Model,
+	// 			}
+	// 			if err := receipt.Insert(ctx); err != nil {
+	// 				slog.Error("failed to insert receipt", "error", err)
+	// 			}
+	// 		}()
+	// 		return textOut, nil
+	// 	},
+	// 	genkit.WithFlowAuth(firebaseAuth),
+	// )
 
 	go func() {
 		err := genkit.Init(ctx, &genkit.Options{FlowAddr: "-"})
@@ -124,6 +148,7 @@ func main() {
 	corsMiddleware := cors.New(cors.Options{
 		AllowedOrigins: []string{
 			"http://localhost:3000",
+			"http://localhost:4173",
 			"https://assistant.heyditto.ai",
 			"https://ditto-app-dev.web.app",
 		},
@@ -131,7 +156,58 @@ func main() {
 		AllowedHeaders: []string{"*"}, // Allow all headers
 		MaxAge:         86400,         // 24 hours
 	})
-	mux := genkit.NewFlowServeMux(nil)
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
+		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var bod rq.PromptV1
+		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		err = firebaseAuth.CheckAuthPolicy(ctx, bod)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		user, err := db.GetOrCreateUser(ctx, bod.UserID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if user.Balance <= 0 {
+			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
+			return
+		}
+
+		var rsp claude.Response
+		err = rsp.Prompt(ctx, bod)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		for token := range rsp.Text {
+			if token.Err != nil {
+				http.Error(w, token.Err.Error(), http.StatusInternalServerError)
+				return
+			}
+			fmt.Fprint(w, token.Ok)
+		}
+
+		receipt := db.Receipt{
+			UserID:       user.ID,
+			InputTokens:  int64(rsp.InputTokens),
+			OutputTokens: int64(rsp.OutputTokens),
+			ServiceName:  llm.ModelClaude35Sonnet,
+		}
+		if err := receipt.Insert(ctx); err != nil {
+			slog.Error("failed to insert receipt", "error", err)
+		}
+	})
 
 	mux.HandleFunc("POST /v1/embed", func(w http.ResponseWriter, r *http.Request) {
 		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
@@ -150,84 +226,42 @@ func main() {
 			return
 
 		}
-		if bod.Model == "text-embedding-3-small" {
-			// OpenAI Embeddings
-			type RequestEmbeddingOpenAI struct {
-				Input          string `json:"input"`
-				Model          string `json:"model"`
-				EncodingFormat string `json:"encoding_format"`
-			}
-			var buf bytes.Buffer
-			if err := json.NewEncoder(&buf).Encode(RequestEmbeddingOpenAI{
-				Input:          bod.Text,
-				Model:          bod.Model,
-				EncodingFormat: "float",
-			}); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/embeddings", &buf)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Authorization", "Bearer "+secr.OPENAI_EMBEDDINGS_API_KEY)
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				http.Error(w, fmt.Sprintf("failed to generate embedding: %s", resp.Status), resp.StatusCode)
-				return
-			}
-			var respBody struct {
-				Data []struct {
-					Embedding []float32 `json:"embedding"`
-				} `json:"data"`
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			if len(respBody.Data) == 0 {
-				http.Error(w, "no embeddings returned", http.StatusInternalServerError)
-				return
-			}
-			json.NewEncoder(w).Encode(respBody.Data[0].Embedding)
-			return
-		}
-
-		// Google Vertex AI Embedders
-		if bod.Model != "" {
-			if !vertexai.IsDefinedEmbedder(bod.Model) {
-				http.Error(w, fmt.Sprintf("embedFlow: model not found: %s", bod.Model), http.StatusBadRequest)
-				return
-			}
-		} else {
-			bod.Model = "text-embedding-004"
-		}
-		embedder := vertexai.Embedder(bod.Model)
-		embeddings, err := embedder.Embed(ctx, &ai.EmbedRequest{
-			Documents: []*ai.Document{
-				{
-					Content: []*ai.Part{
-						ai.NewTextPart(bod.Text),
-					},
-				},
-			},
-		})
+		user, err := db.GetOrCreateUser(ctx, bod.UserID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if len(embeddings.Embeddings) == 0 {
-			http.Error(w, "no embeddings returned", http.StatusInternalServerError)
+		if user.Balance <= 0 {
+			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 			return
 		}
-		json.NewEncoder(w).Encode(embeddings.Embeddings[0].Embedding)
+
+		var embedding llm.Embedding
+		if bod.Model == llm.ModelTextEmbedding3Small {
+			embedding, err = openai.GenerateEmbedding(ctx, bod.Text, bod.Model)
+		} else {
+			if bod.Model == "" {
+				bod.Model = llm.ModelTextEmbedding004
+			}
+			embedding, err = googai.GenerateEmbedding(ctx, bod.Text, bod.Model)
+		}
+
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(embedding)
+
+		receipt := db.Receipt{
+			UserID:      user.ID,
+			TotalTokens: int64(llm.EstimateTokens(bod.Text)),
+			ServiceName: bod.Model,
+		}
+		if err := receipt.Insert(ctx); err != nil {
+			slog.Error("failed to insert receipt", "error", err)
+		}
 	})
 
 	customSearch, err := customsearch.NewService(ctx, option.WithAPIKey(secr.SEARCH_API_KEY))
@@ -257,9 +291,26 @@ func main() {
 		if bod.NumResults == 0 {
 			bod.NumResults = 5
 		}
+		user, err := db.GetOrCreateUser(ctx, bod.UserID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if user.Balance <= 0 {
+			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
+			return
+		}
 		search, err := brave.Search(r.Context(), bod.Query, bod.NumResults)
 		if err == nil {
 			search.Text(w)
+			receipt := db.Receipt{
+				UserID:      user.ID,
+				NumSearches: 1,
+				ServiceName: llm.SearchEngineBrave,
+			}
+			if err := receipt.Insert(ctx); err != nil {
+				slog.Error("failed to insert receipt", "error", err)
+			}
 			return
 		}
 		slog.Error("failed to search with Brave, trying Google", "error", err)
@@ -284,11 +335,16 @@ func main() {
 				i+1, item.Title, item.Link, item.Snippet,
 			)
 		}
+		receipt := db.Receipt{
+			UserID:      user.ID,
+			NumSearches: 1,
+			ServiceName: llm.SearchEngineGoogle,
+		}
+		if err := receipt.Insert(ctx); err != nil {
+			slog.Error("failed to insert receipt", "error", err)
+		}
 	})
 
-	dalleClient := &http.Client{
-		Timeout: 20 * time.Second,
-	}
 	mux.HandleFunc("POST /v1/generate-image", func(w http.ResponseWriter, r *http.Request) {
 		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
 		if err != nil {
@@ -306,13 +362,23 @@ func main() {
 			return
 		}
 		if bod.Model == "" {
-			bod.Model = "dall-e-3"
+			bod.Model = llm.ModelDalle3
 		}
+		user, err := db.GetOrCreateUser(ctx, bod.UserID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if user.Balance <= 0 {
+			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
+			return
+		}
+
 		type RequestImageOpenAI struct {
-			Prompt string `json:"prompt"`
-			Model  string `json:"model"`
-			N      int    `json:"n"`
-			Size   string `json:"size"`
+			Prompt string          `json:"prompt"`
+			Model  llm.ServiceName `json:"model"`
+			N      int             `json:"n"`
+			Size   string          `json:"size"`
 		}
 		var buf bytes.Buffer
 		if err := json.NewEncoder(&buf).Encode(RequestImageOpenAI{
@@ -334,7 +400,7 @@ func main() {
 
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+secr.OPENAI_DALLE_API_KEY)
-		resp, err := dalleClient.Do(req)
+		resp, err := llm.HttpClient.Do(req)
 		if err != nil {
 			slog.Error("failed to send image request", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -362,6 +428,14 @@ func main() {
 			return
 		}
 		fmt.Fprintln(w, respBody.Data[0].URL)
+		receipt := db.Receipt{
+			UserID:      user.ID,
+			NumImages:   1,
+			ServiceName: bod.Model,
+		}
+		if err := receipt.Insert(ctx); err != nil {
+			slog.Error("failed to insert receipt", "error", err)
+		}
 		slog.Debug("generated image", "url", respBody.Data[0].URL)
 	})
 
@@ -375,6 +449,10 @@ func main() {
 		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		err = firebaseAuth.CheckAuthPolicy(ctx, bod)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
 		}
 		if bod.K == 0 {
 			bod.K = 5
@@ -390,6 +468,48 @@ func main() {
 			fmt.Fprintf(w, "Example %d\n", i+1)
 			fmt.Fprintf(w, "User's Prompt: %s\nDitto:\n%s\n\n", example.Prompt, example.Response)
 		}
+	})
+
+	mux.HandleFunc("GET /v1/balance", func(w http.ResponseWriter, r *http.Request) {
+		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var bod rq.BalanceV1
+		if err := bod.FromQuery(r); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		err = firebaseAuth.CheckAuthPolicy(ctx, bod)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var q struct {
+			Balance   int64   `db:"balance"`
+			ImgTokens float64 `db:"base_cost_per_call"`
+		}
+		err = db.D.QueryRowContext(ctx, `
+			SELECT users.balance,
+			       ROUND(users.balance / ((svc.base_cost_per_call + svc.base_cost_per_image) * tpd.count * (1 + svc.profit_margin_percentage / 100.0)))
+			FROM users,
+			     services AS svc,
+			     tokens_per_dollar AS tpd
+			WHERE uid = $1
+			  AND svc.name = 'dall-e-3'
+			  AND tpd.name = 'ditto'
+		`, bod.UserID).Scan(&q.Balance, &q.ImgTokens)
+		if err != nil {
+			slog.Error("failed to get balance", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		var rsp rp.BalanceV1
+		rsp.Balance = numfmt.FormatLargeNumber(q.Balance)
+		rsp.Images = numfmt.FormatLargeNumber(int64(q.ImgTokens))
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(rsp)
 	})
 
 	handler := corsMiddleware.Handler(mux)

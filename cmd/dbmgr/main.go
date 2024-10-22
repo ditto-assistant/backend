@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -11,69 +10,150 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
-	"github.com/ditto-assistant/backend/pkg/consts"
+	firebase "firebase.google.com/go/v4"
+	"github.com/ditto-assistant/backend/cfg/envs"
+	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/db"
-	"github.com/ditto-assistant/backend/pkg/secr"
+	"github.com/ditto-assistant/backend/pkg/llm"
+	"github.com/ditto-assistant/backend/pkg/numfmt"
 	"github.com/firebase/genkit/go/ai"
 	"github.com/firebase/genkit/go/plugins/vertexai"
+	_ "github.com/tursodatabase/go-libsql"
 	"golang.org/x/sync/errgroup"
 )
 
 type Mode int
 
 const (
-	ModeIngest Mode = iota
+	ModeUnknown Mode = iota
+	ModeMigrate
+	ModeRollback
 	ModeSearch
-)
-
-var (
-	folder string
-	mode   Mode
-	dryRun bool
-	query  string
+	ModeIngest
+	ModeFirestore
+	ModeSyncBalance
 )
 
 func main() {
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	var (
+		dittoEnv envs.Env
+		folder   string
+		dryRun   bool
+		query    string
+		mode     Mode
+		userID   string
+	)
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return a
+		},
+	})))
+	var shutdown sync.WaitGroup
+	defer shutdown.Wait()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if len(os.Args) < 2 {
-		log.Fatalf("usage: %s <command> [args]", os.Args[0])
-	}
 
-	switch os.Args[1] {
+	// Parse global flags
+	globalFlags := flag.NewFlagSet("global", flag.ExitOnError)
+	envFlag := globalFlags.String("env", envs.EnvLocal.String(), "ditto environment")
+	globalFlags.Parse(os.Args[1:])
+	dittoEnv = envs.Env(*envFlag)
+	envs.DITTO_ENV = dittoEnv
+	err := dittoEnv.EnvFile().Load()
+	if err != nil {
+		log.Fatalf("error loading environment file: %s", err)
+	}
+	if globalFlags.NArg() < 1 {
+		log.Fatalf("usage: %s [-env <environment>] <command> [args]", os.Args[0])
+	}
+	subcommand := globalFlags.Arg(0)
+
+	// Parse subcommand flags
+	var version string
+	switch subcommand {
+	case "migrate":
+		mode = ModeMigrate
+
+	case "rollback":
+		mode = ModeRollback
+		rollbackFlags := flag.NewFlagSet("rollback", flag.ExitOnError)
+		rollbackFlags.Usage = func() {
+			fmt.Fprintf(os.Stderr, "usage: dbmgr [-env <environment>] rollback <version>\n")
+		}
+		rollbackFlags.Parse(globalFlags.Args()[1:])
+		if rollbackFlags.NArg() < 1 {
+			rollbackFlags.Usage()
+			os.Exit(1)
+		}
+		version = rollbackFlags.Arg(0)
+
 	case "ingest":
 		mode = ModeIngest
-		fset := flag.NewFlagSet("ingest", flag.ExitOnError)
-		fset.StringVar(&folder, "folder", "cmd/dbmgr/tool-examples", "folder to ingest")
-		fset.BoolVar(&dryRun, "dry-run", false, "dry run")
-		fset.Parse(os.Args[2:])
-		slog.Debug("ingest mode", "folder", folder, "dry-run", dryRun)
+		ingestFlags := flag.NewFlagSet("ingest", flag.ExitOnError)
+		ingestFlags.StringVar(&folder, "folder", "cmd/dbmgr/tool-examples", "folder to ingest")
+		ingestFlags.BoolVar(&dryRun, "dry-run", false, "dry run")
+		ingestFlags.Parse(globalFlags.Args()[1:])
+
 	case "search":
 		mode = ModeSearch
-		if len(os.Args) < 3 {
-			log.Fatalf("usage: %s search <query>", os.Args[0])
+		searchFlags := flag.NewFlagSet("search", flag.ExitOnError)
+		searchFlags.Usage = func() {
+			fmt.Fprintf(os.Stderr, "usage: dbmgr [-env <environment>] search <query>\n")
 		}
-		query = strings.Join(os.Args[2:], " ")
-		slog.Debug("search mode", "query", query)
+		searchFlags.Parse(globalFlags.Args()[1:])
+		if searchFlags.NArg() < 1 {
+			searchFlags.Usage()
+			os.Exit(1)
+		}
+		query = strings.Join(searchFlags.Args(), " ")
+		slog.Debug("search mode", "query", query, "env", dittoEnv)
+
+	case "firestore":
+		mode = ModeFirestore
+		firestoreFlags := flag.NewFlagSet("firestore", flag.ExitOnError)
+		firestoreFlags.StringVar(&userID, "uid", "", "user ID")
+		firestoreFlags.Parse(globalFlags.Args()[1:])
+
+	case "sync":
+		if globalFlags.NArg() < 2 {
+			log.Fatalf("usage: dbmgr [-env <environment>] sync <sync_type>")
+		}
+		switch globalFlags.Arg(1) {
+		case "bals":
+			mode = ModeSyncBalance
+		default:
+			log.Fatalf("unknown sync type: %s", globalFlags.Arg(1))
+		}
+
 	default:
-		log.Fatalf("unknown command: %s", os.Args[1])
+		log.Fatalf("unknown command: %s", subcommand)
 	}
 
 	if err := secr.Setup(ctx); err != nil {
 		log.Fatalf("failed to initialize secrets: %s", err)
 	}
-	var shutdown sync.WaitGroup
 	if err := db.Setup(ctx, &shutdown); err != nil {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
-	if err := migrate(ctx); err != nil {
-		log.Fatalf("failed to migrate database: %s", err)
-	}
+
 	switch mode {
+	case ModeMigrate:
+		if err := migrate(ctx); err != nil {
+			log.Fatalf("failed to migrate database: %s", err)
+		}
+	case ModeRollback:
+		if err := rollback(ctx, version); err != nil {
+			log.Fatalf("failed to rollback database: %s", err)
+		}
 	case ModeIngest:
 		if err := ingestPromptExamples(ctx, folder, dryRun); err != nil {
 			log.Fatalf("failed to ingest prompt examples: %s", err)
@@ -82,19 +162,128 @@ func main() {
 		if err := testSearch(ctx, query); err != nil {
 			log.Fatalf("failed to test search: %s", err)
 		}
+	case ModeFirestore:
+		if err := firestorePrintUser(ctx, userID); err != nil {
+			log.Fatalf("failed to test firestore: %s", err)
+		}
+	case ModeSyncBalance:
+		if err := syncBalance(ctx); err != nil {
+			log.Fatalf("failed to sync balance: %s", err)
+		}
 	}
-	cancel()
-	shutdown.Wait()
+}
+
+func syncBalance(ctx context.Context) error {
+	slog.Debug("syncing balance from firestore to database")
+	count, err := db.GetDittoTokensPerDollar(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting ditto tokens per dollar: %w", err)
+	}
+	slog.Debug("ditto tokens per dollar", "count", numfmt.FormatLargeNumber(count))
+	app, err := firebase.NewApp(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("error creating firebase app: %w", err)
+	}
+	firestore, err := app.Firestore(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting firestore client: %w", err)
+	}
+
+	balanceQuery := firestore.CollectionGroup("balance")
+	docs, err := balanceQuery.Documents(ctx).GetAll()
+	if err != nil {
+		return fmt.Errorf("error getting balance documents: %w", err)
+	}
+
+	for _, doc := range docs {
+		var userData struct {
+			Balance float64 `firestore:"balance"`
+		}
+		if err := doc.DataTo(&userData); err != nil {
+			slog.Error("Error unmarshaling Firestore document", "docID", doc.Ref.ID, "error", err)
+			continue
+		}
+
+		userID := doc.Ref.Parent.Parent.ID
+		newBalance := int64(userData.Balance * float64(count))
+		if err := db.InitUser(ctx, userID, newBalance); err != nil {
+			return fmt.Errorf("error initializing user: %w", err)
+		}
+		slog.Info("User balance synced",
+			"userID", userID,
+			"user_dollars", strconv.FormatFloat(userData.Balance, 'f', 2, 64),
+			"user_tokens", numfmt.FormatLargeNumber(newBalance),
+		)
+	}
+
+	return nil
+}
+
+func firestorePrintUser(ctx context.Context, userID string) error {
+	app, err := firebase.NewApp(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("error creating firebase app: %w", err)
+	}
+	firestore, err := app.Firestore(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting firestore client: %w", err)
+	}
+
+	// getBalanceFromFirestore retrieves the balance for a given user ID from Firestore
+	// It returns the balance as a float64, or false if the user doesn't exist or an error occurs
+	balanceRef := firestore.Collection("users").Doc(userID).Collection("balance")
+	docs, err := balanceRef.Documents(ctx).GetAll()
+	if err != nil {
+		slog.Error("Error getting documents from Firestore users collection", "error", err)
+		return fmt.Errorf("error getting documents from Firestore: %w", err)
+	}
+
+	if len(docs) == 0 {
+		slog.Info("User doesn't exist in Firestore", "userID", userID)
+		return nil
+	}
+
+	userDoc := docs[0]
+	var userData struct {
+		Balance float64 `firestore:"balance"`
+	}
+	if err := userDoc.DataTo(&userData); err != nil {
+		slog.Error("Error unmarshaling Firestore document", "error", err)
+		return fmt.Errorf("error unmarshaling Firestore document: %w", err)
+	}
+
+	if userData.Balance != 0 {
+		slog.Info("Retrieved user balance from Firestore", "userID", userID, "balance", userData.Balance)
+	} else {
+		slog.Info("User balance not found or zero", "userID", userID)
+	}
+	count, err := db.GetDittoTokensPerDollar(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting ditto tokens per dollar: %w", err)
+	}
+	newBalance := int64(userData.Balance * float64(count))
+	slog.Info("User tokens", "ditto per dollar", count, "user_dollars", userData.Balance, "user_tokens", numfmt.FormatLargeNumber(newBalance))
+
+	return nil
 }
 
 func testSearch(ctx context.Context, query string) error {
+	slog.Debug("test search", "query", query)
+	minVersion := "v0.0.1"
+	latestVersion, err := getLatestVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting latest version: %w", err)
+	}
+	if latestVersion < minVersion {
+		return fmt.Errorf("version %s is not applied, please apply at least version %s before searching", latestVersion, minVersion)
+	}
 	if err := vertexai.Init(ctx, &vertexai.Config{
 		ProjectID: "ditto-app-dev",
 		Location:  "us-central1",
 	}); err != nil {
 		return fmt.Errorf("error initializing vertexai: %w", err)
 	}
-	embedder := vertexai.Embedder(consts.ModelTextEmbedding004.String())
+	embedder := vertexai.Embedder(llm.ModelTextEmbedding004.String())
 	if embedder == nil {
 		return errors.New("embedder not found")
 	}
@@ -113,7 +302,7 @@ func testSearch(ctx context.Context, query string) error {
 	if err != nil {
 		return fmt.Errorf("error embedding query: %w", err)
 	}
-	em := db.Embedding(emQuery.Embeddings[0].Embedding)
+	em := llm.Embedding(emQuery.Embeddings[0].Embedding)
 	examples, err := db.SearchExamples(ctx, em)
 	if err != nil {
 		return fmt.Errorf("error searching examples: %w", err)
@@ -128,6 +317,15 @@ func testSearch(ctx context.Context, query string) error {
 }
 
 func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error {
+	slog.Info("ingesting prompt examples", "folder", folder, "dry-run", dryRun)
+	minVersion := "v0.0.1"
+	latestVersion, err := getLatestVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting latest version: %w", err)
+	}
+	if latestVersion < minVersion {
+		return fmt.Errorf("version %s is not applied, please apply at least version %s before embedding", latestVersion, minVersion)
+	}
 	if err := vertexai.Init(ctx, &vertexai.Config{
 		ProjectID: "ditto-app-dev",
 		Location:  "us-central1",
@@ -138,13 +336,13 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 	if err != nil {
 		return fmt.Errorf("error reading folder: %w", err)
 	}
-	fileSlice := make([]ToolExample, 0, len(files))
+	fileSlice := make([]ToolExamples, 0, len(files))
 	for _, file := range files {
 		file, err := os.Open(file)
 		if err != nil {
 			return fmt.Errorf("error opening file: %w", err)
 		}
-		var toolExamples ToolExample
+		var toolExamples ToolExamples
 		if err := json.NewDecoder(file).Decode(&toolExamples); err != nil {
 			return fmt.Errorf("error reading file: %w", err)
 		}
@@ -156,14 +354,14 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 		return nil
 	}
 
-	embedder := vertexai.Embedder(consts.ModelTextEmbedding004.String())
+	embedder := vertexai.Embedder(llm.ModelTextEmbedding004.String())
 	if embedder == nil {
 		return errors.New("embedder not found")
 	}
 	group, embedCtx := errgroup.WithContext(ctx)
 	for _, tool := range fileSlice {
 		group.Go(func() error {
-			if err := tool.EmbedBatch(embedCtx, embedder); err != nil {
+			if err := tool.Embed(embedCtx, embedder); err != nil {
 				return fmt.Errorf("error embedding tool: %w", err)
 			}
 			return nil
@@ -181,10 +379,16 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 	defer tx.Rollback()
 
 	for _, tool := range fileSlice {
+		var serviceID int64
+		err := tx.QueryRowContext(ctx, "SELECT id FROM services WHERE name = ?", tool.ServiceName).Scan(&serviceID)
+		if err != nil {
+			return fmt.Errorf("error getting service ID for %s: %w", tool.ServiceName, err)
+		}
+
 		// Insert into tools table
 		result, err := tx.ExecContext(ctx,
-			"INSERT INTO tools (name, description, version) VALUES (?, ?, ?)",
-			tool.Name, tool.Description, tool.Version)
+			"INSERT INTO tools (name, description, version, service_id) VALUES (?, ?, ?, ?)",
+			tool.Name, tool.Description, tool.Version, serviceID)
 		if err != nil {
 			return fmt.Errorf("error inserting tool: %w", err)
 		}
@@ -218,15 +422,13 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 	return nil
 }
 
-type ToolExample struct {
-	Name        string       `json:"name"`
-	Version     string       `json:"version"`
-	Description string       `json:"description"`
-	Examples    []db.Example `json:"examples"`
+type ToolExamples struct {
+	llm.Tool
+	Examples []llm.Example `json:"examples"`
 }
 
-// EmbedBatch embeds all the examples in the tool example.
-func (te ToolExample) EmbedBatch(ctx context.Context, embedder ai.Embedder) error {
+// Embed embeds all the examples in the tool example.
+func (te ToolExamples) Embed(ctx context.Context, embedder ai.Embedder) error {
 	docs := make([]*ai.Document, 0, len(te.Examples)*2)
 	for _, example := range te.Examples {
 		// Embed the prompt
@@ -270,67 +472,162 @@ func (te ToolExample) EmbedBatch(ctx context.Context, embedder ai.Embedder) erro
 	}
 	return nil
 }
+
 func migrate(ctx context.Context) error {
-	// Check if the migrations table exists
-	var tableExists bool
-	var name string
-	err := db.D.QueryRowContext(ctx, "SELECT name FROM sqlite_master WHERE type='table' AND name='migrations'").Scan(&name)
-	tableExists = (name == "migrations")
-	if err != nil && err != sql.ErrNoRows {
-		return fmt.Errorf("error checking if migrations table exists: %w", err)
+	slog.Info("migrating database")
+	_, err := db.D.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS migrations (
+			name TEXT PRIMARY KEY,
+			date TEXT DEFAULT (datetime('now')),
+			version TEXT NOT NULL
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("error creating migrations table: %w", err)
 	}
-	if !tableExists {
-		slog.Debug("migrations table does not exist, running initial migration")
-	} else {
-		// Check if we have at least one migration
-		var count int
-		err = db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations").Scan(&count)
+
+	versionFolders, err := filepath.Glob("cmd/dbmgr/migrations/v*")
+	if err != nil {
+		return fmt.Errorf("error reading migration version folders: %w", err)
+	}
+
+	for _, versionFolder := range versionFolders {
+		files, err := filepath.Glob(filepath.Join(versionFolder, "*.sql"))
 		if err != nil {
-			return fmt.Errorf("error checking migrations: %w", err)
-		} else if count > 0 {
-			slog.Debug("tables already migrated", "migrations", count)
-			return nil
-		} else {
-			slog.Debug("migrations table exists but no migrations found")
+			return fmt.Errorf("error reading migrations in %s: %w", versionFolder, err)
+		}
+
+		version := filepath.Base(versionFolder)
+		for _, file := range files {
+			if err := applyMigration(ctx, file, version); err != nil {
+				return err
+			}
 		}
 	}
 
-	tx, err := db.D.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("error beginning transaction: %w", err)
-	}
-	defer tx.Rollback()
-	// Create the initial migration
-	_, err = tx.ExecContext(ctx, createExampleStore)
-	if err != nil {
-		return fmt.Errorf("error creating tables: %w", err)
-	}
-	slog.Debug("tables migrated")
-	return tx.Commit()
+	slog.Info("all migrations completed successfully")
+	return nil
 }
 
-const createExampleStore = `
-CREATE TABLE IF NOT EXISTS migrations (
-  migration_name TEXT,
-  migration_date TEXT DEFAULT (datetime('now'))
-);
-INSERT INTO migrations (migration_name) 
-SELECT 'table_init' 
-WHERE NOT EXISTS (SELECT 1 FROM migrations);
+func applyMigration(ctx context.Context, file, version string) error {
+	migrationName := strings.TrimSuffix(filepath.Base(file), ".sql")
+	var count int
+	err := db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE name = ?", migrationName).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("error checking migration status: %w", err)
+	}
+	if count > 0 {
+		slog.Debug("migration already applied, skipping", "file", migrationName)
+		return nil
+	}
 
+	contents, err := os.ReadFile(file)
+	if err != nil {
+		return fmt.Errorf("error reading migration file %s: %w", file, err)
+	}
+	statements := strings.Split(string(contents), ";\n\n")
+	for _, stmt := range statements {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		_, err = db.D.ExecContext(ctx, stmt)
+		if err != nil {
+			return fmt.Errorf("error applying migration %s: %w", file, err)
+		}
+	}
+	_, err = db.D.ExecContext(ctx, "INSERT INTO migrations (name, version) VALUES (?, ?)", migrationName, version)
+	if err != nil {
+		return fmt.Errorf("error recording migration %s: %w", file, err)
+	}
 
-CREATE TABLE IF NOT EXISTS tools (
-  name TEXT,
-  description TEXT,
-  version TEXT
-);
+	slog.Debug("migration applied successfully", "file", migrationName)
+	return nil
+}
 
-CREATE TABLE IF NOT EXISTS examples (
-  tool_id INTEGER,
-  prompt TEXT,
-  response TEXT,
-  -- 768-dimensional f32 vector embeddings
-  em_prompt F32_BLOB(768), 
-  em_prompt_response F32_BLOB(768)
-);
-`
+func rollback(ctx context.Context, version string) error {
+	slog.Info("rolling back database", "version", version)
+	versionFolders, err := filepath.Glob(filepath.Join("cmd/dbmgr/rollbacks/v*"))
+	if err != nil {
+		return fmt.Errorf("error reading rollback version folders: %w", err)
+	}
+	slices.Reverse(versionFolders)
+
+	for _, folder := range versionFolders {
+		folderVersion := filepath.Base(folder)
+		if folderVersion <= version {
+			break // Stop rolling back once we reach the target version
+		}
+
+		files, err := filepath.Glob(filepath.Join(folder, "*.sql"))
+		if err != nil {
+			return fmt.Errorf("error reading rollback files in %s: %w", folder, err)
+		}
+		slices.Reverse(files)
+
+		for _, file := range files {
+			if err := applyRollback(ctx, file); err != nil {
+				return err
+			}
+		}
+	}
+	slog.Info("database rolled back successfully")
+	return nil
+}
+
+func applyRollback(ctx context.Context, file string) error {
+	var tableExists bool
+	err := db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='migrations'").Scan(&tableExists)
+	if err != nil {
+		return fmt.Errorf("error checking if migrations table exists: %w", err)
+	}
+	if !tableExists {
+		return errors.New("migrations table does not exist, cannot apply rollback")
+	}
+	rollbackName := strings.TrimSuffix(filepath.Base(file), ".sql")
+	var count int
+	err = db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE name = ?", rollbackName).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("error checking migration status: %w", err)
+	}
+	if count == 0 {
+		slog.Debug("migration not applied, skipping rollback", "file", rollbackName)
+		return nil
+	}
+
+	contents, err := os.ReadFile(file)
+	if err != nil {
+		return fmt.Errorf("error reading rollback file %s: %w", file, err)
+	}
+	statements := strings.Split(string(contents), ";\n\n")
+	for _, stmt := range statements {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		_, err = db.D.ExecContext(ctx, stmt)
+		if err != nil {
+			return fmt.Errorf("error rolling back migration %s: %w", file, err)
+		}
+	}
+	_, err = db.D.ExecContext(ctx, "DELETE FROM migrations WHERE name = ? AND EXISTS (SELECT 1 FROM migrations LIMIT 1)", rollbackName)
+	if err != nil {
+		if strings.Contains(err.Error(), "no such table") {
+			slog.Warn("migrations table does not exist, skipping deletion", "name", rollbackName)
+		} else {
+			return fmt.Errorf("error deleting migration record for %s: %w", rollbackName, err)
+		}
+	}
+
+	slog.Debug("rollback applied successfully", "file", rollbackName)
+	return nil
+}
+
+func getLatestVersion(ctx context.Context) (string, error) {
+	var version string
+	err := db.D.QueryRowContext(ctx, "SELECT version FROM migrations ORDER BY date DESC, version DESC LIMIT 1").Scan(&version)
+	if err != nil {
+		return "", fmt.Errorf("error getting latest version: %w", err)
+	}
+	return version, nil
+}
