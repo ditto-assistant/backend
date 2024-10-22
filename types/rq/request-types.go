@@ -60,7 +60,7 @@ type SearchExamplesV1 struct {
 func (s SearchExamplesV1) GetUserID() string { return s.UserID }
 
 type BalanceV1 struct {
-	UserID string `json:"userID" form:"userID"`
+	UserID string `json:"userID"`
 }
 
 func (b BalanceV1) GetUserID() string { return b.UserID }

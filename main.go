@@ -546,7 +546,7 @@ func main() {
 				})
 				return
 			}
-			slog.Error("failed to get balance", "error", err)
+			slog.Error("failed to get balance", "uid", bod.UserID, "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
