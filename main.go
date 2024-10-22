@@ -151,6 +151,7 @@ func main() {
 			"http://localhost:4173",
 			"https://assistant.heyditto.ai",
 			"https://ditto-app-dev.web.app",
+			"https://ditto-app-dev-*.web.app",
 		},
 		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders: []string{"*"}, // Allow all headers
