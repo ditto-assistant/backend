@@ -34,7 +34,7 @@ func GenerateEmbedding(ctx context.Context, text string, model llm.ServiceName) 
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+secr.OPENAI_EMBEDDINGS_API_KEY)
+	req.Header.Set("Authorization", "Bearer "+secr.OPENAI_EMBEDDINGS_API_KEY.String())
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

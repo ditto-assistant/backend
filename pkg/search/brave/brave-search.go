@@ -24,7 +24,7 @@ func Search(ctx context.Context, query string, numResults int) (results Results,
 	if err != nil {
 		return
 	}
-	req.Header.Add("X-Subscription-Token", secr.BRAVE_SEARCH_API_KEY)
+	req.Header.Add("X-Subscription-Token", secr.BRAVE_SEARCH_API_KEY.String())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return

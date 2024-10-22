@@ -279,7 +279,7 @@ func main() {
 		}()
 	})
 
-	customSearch, err := customsearch.NewService(bgCtx, option.WithAPIKey(secr.SEARCH_API_KEY))
+	customSearch, err := customsearch.NewService(bgCtx, option.WithAPIKey(secr.SEARCH_API_KEY.String()))
 	if err != nil {
 		log.Fatalf("failed to initialize custom search: %s", err)
 	}
@@ -428,7 +428,7 @@ func main() {
 		}
 
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+secr.OPENAI_DALLE_API_KEY)
+		req.Header.Set("Authorization", "Bearer "+secr.OPENAI_DALLE_API_KEY.String())
 		resp, err := llm.HttpClient.Do(req)
 		if err != nil {
 			slog.Error("failed to send image request", "error", err)
