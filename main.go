@@ -532,7 +532,7 @@ func main() {
 			FROM users,
 			     services AS svc,
 			     tokens_per_dollar AS tpd
-			WHERE uid = ? 
+			WHERE uid = ?
 			  AND svc.name = 'dall-e-3'
 			  AND tpd.name = 'ditto'
 		`, bod.UserID).Scan(&q.Balance, &q.ImgTokens)
