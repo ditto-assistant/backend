@@ -6,3 +6,5 @@ README.md
 .dockerignore
 Dockerfile
 .github
+go.work
+go.work.sum

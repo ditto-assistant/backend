@@ -7,11 +7,14 @@ WORKDIR /workspace
 # Install build dependencies using apt-get instead of apk
 RUN apt-get update && apt-get install -y build-essential
 
-# Copy your Go project code
-COPY . .
+# Copy only the main module files
+COPY go.mod go.sum ./
 
-# Install Go dependencies
+# Install Go dependencies for the main module only
 RUN go mod download
+
+# Now copy the rest of the source code
+COPY . .
 
 # Build your Go application
 RUN CGO_ENABLED=1 GOOS=linux CGO_LDFLAGS="-ldl" go build -o cmd/backend .
