@@ -547,28 +547,20 @@ func applyMigration(ctx context.Context, file, version string) error {
 
 func rollback(ctx context.Context, version string) error {
 	slog.Info("rolling back database", "version", version)
-	versionFolders, err := filepath.Glob(filepath.Join("cmd/dbmgr/rollbacks/v*"))
+	rollbackFiles, err := filepath.Glob("cmd/dbmgr/rollbacks/v*.sql")
 	if err != nil {
-		return fmt.Errorf("error reading rollback version folders: %w", err)
+		return fmt.Errorf("error reading rollback files: %w", err)
 	}
-	slices.Reverse(versionFolders)
+	slices.Reverse(rollbackFiles)
 
-	for _, folder := range versionFolders {
-		folderVersion := filepath.Base(folder)
-		if folderVersion <= version {
+	for _, file := range rollbackFiles {
+		fileVersion := strings.TrimSuffix(filepath.Base(file), ".sql")
+		if fileVersion <= version {
 			break // Stop rolling back once we reach the target version
 		}
 
-		files, err := filepath.Glob(filepath.Join(folder, "*.sql"))
-		if err != nil {
-			return fmt.Errorf("error reading rollback files in %s: %w", folder, err)
-		}
-		slices.Reverse(files)
-
-		for _, file := range files {
-			if err := applyRollback(ctx, file); err != nil {
-				return err
-			}
+		if err := applyRollback(ctx, file); err != nil {
+			return err
 		}
 	}
 	slog.Info("database rolled back successfully")
@@ -584,14 +576,15 @@ func applyRollback(ctx context.Context, file string) error {
 	if !tableExists {
 		return errors.New("migrations table does not exist, cannot apply rollback")
 	}
-	rollbackName := strings.TrimSuffix(filepath.Base(file), ".sql")
+
+	rollbackVersion := strings.TrimSuffix(filepath.Base(file), ".sql")
 	var count int
-	err = db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE name = ?", rollbackName).Scan(&count)
+	err = db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE version = ?", rollbackVersion).Scan(&count)
 	if err != nil {
 		return fmt.Errorf("error checking migration status: %w", err)
 	}
 	if count == 0 {
-		slog.Debug("migration not applied, skipping rollback", "file", rollbackName)
+		slog.Debug("version not applied, skipping rollback", "version", rollbackVersion)
 		return nil
 	}
 
@@ -599,7 +592,10 @@ func applyRollback(ctx context.Context, file string) error {
 	if err != nil {
 		return fmt.Errorf("error reading rollback file %s: %w", file, err)
 	}
-	statements := strings.Split(string(contents), ";\n\n")
+
+	// Split the contents into statements, respecting SQL strings
+	statements := splitSQLStatements(string(contents))
+
 	for _, stmt := range statements {
 		stmt = strings.TrimSpace(stmt)
 		if stmt == "" {
@@ -607,20 +603,50 @@ func applyRollback(ctx context.Context, file string) error {
 		}
 		_, err = db.D.ExecContext(ctx, stmt)
 		if err != nil {
-			return fmt.Errorf("error rolling back migration %s: %w", file, err)
-		}
-	}
-	_, err = db.D.ExecContext(ctx, "DELETE FROM migrations WHERE name = ? AND EXISTS (SELECT 1 FROM migrations LIMIT 1)", rollbackName)
-	if err != nil {
-		if strings.Contains(err.Error(), "no such table") {
-			slog.Warn("migrations table does not exist, skipping deletion", "name", rollbackName)
-		} else {
-			return fmt.Errorf("error deleting migration record for %s: %w", rollbackName, err)
+			return fmt.Errorf("error rolling back version %s: %w", rollbackVersion, err)
 		}
 	}
 
-	slog.Debug("rollback applied successfully", "file", rollbackName)
+	_, err = db.D.ExecContext(ctx, "DELETE FROM migrations WHERE version = ?", rollbackVersion)
+	if err != nil {
+		return fmt.Errorf("error deleting migration records for version %s: %w", rollbackVersion, err)
+	}
+
+	slog.Debug("rollback applied successfully", "version", rollbackVersion)
 	return nil
+}
+
+// splitSQLStatements splits a SQL script into individual statements,
+// respecting SQL strings and comments
+func splitSQLStatements(script string) []string {
+	var statements []string
+	var currentStatement strings.Builder
+	var inString bool
+	var stringDelimiter rune
+
+	for _, r := range script {
+		currentStatement.WriteRune(r)
+
+		switch {
+		case r == '\'' || r == '"':
+			if !inString {
+				inString = true
+				stringDelimiter = r
+			} else if stringDelimiter == r {
+				inString = false
+			}
+		case r == ';' && !inString:
+			statements = append(statements, strings.TrimSpace(currentStatement.String()))
+			currentStatement.Reset()
+		}
+	}
+
+	// Add any remaining content as the last statement
+	if currentStatement.Len() > 0 {
+		statements = append(statements, strings.TrimSpace(currentStatement.String()))
+	}
+
+	return statements
 }
 
 func getLatestVersion(ctx context.Context) (string, error) {
