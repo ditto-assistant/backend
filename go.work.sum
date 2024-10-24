@@ -161,7 +161,9 @@ go.opentelemetry.io/otel/sdk/metric v1.26.0/go.mod h1:ClMFFknnThJCksebJwz7KIyEDH
 golang.org/x/mod v0.17.0/go.mod h1:hTbmBsO62+eylJbnUtE2MGJUyE7QWk4xUqPFrRgJ+7c=
 golang.org/x/term v0.25.0/go.mod h1:RPyXicDX+6vLxogjjRxjgD2TKtmAO6NZBsBRfrOLu7M=
 golang.org/x/tools v0.23.0/go.mod h1:pnu6ufv6vQkll6szChhK3C3L/ruaIv5eBeztNG8wtsI=
+google.golang.org/api v0.201.0/go.mod h1:HVY0FCHVs89xIW9fzf/pBvOEm+OolHa86G/txFezyq4=
 google.golang.org/appengine v1.6.8/go.mod h1:1jJ3jBArFh5pcgW8gCtRJnepW8FzD1V44FJffLiz/Ds=
 google.golang.org/genproto/googleapis/api v0.0.0-20240701130421-f6361c86f094/go.mod h1:fJ/e3If/Q67Mj99hin0hMhiNyCRmt6BQ2aWIJshUSJw=
 google.golang.org/genproto/googleapis/bytestream v0.0.0-20241007155032-5fefd90f89a9/go.mod h1:T8O3fECQbif8cez15vxAcjbwXxvL2xbnvbQ7ZfiMAMs=
+google.golang.org/genproto/googleapis/bytestream v0.0.0-20241015192408-796eee8c2d53/go.mod h1:T8O3fECQbif8cez15vxAcjbwXxvL2xbnvbQ7ZfiMAMs=
 gopkg.in/yaml.v2 v2.4.0/go.mod h1:RDklbk79AGWmwhnvt/jBztapEOGDOx6ZbXqjP6csGnQ=
