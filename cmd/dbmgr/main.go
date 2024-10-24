@@ -179,7 +179,7 @@ func syncBalance(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("error getting ditto tokens per dollar: %w", err)
 	}
-	slog.Debug("ditto tokens per dollar", "count", numfmt.FormatLargeNumber(count))
+	slog.Debug("ditto tokens per dollar", "count", numfmt.LargeNumber(count))
 	app, err := firebase.NewApp(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("error creating firebase app: %w", err)
@@ -206,13 +206,14 @@ func syncBalance(ctx context.Context) error {
 
 		userID := doc.Ref.Parent.Parent.ID
 		newBalance := int64(userData.Balance * float64(count))
-		if err := db.InitUser(ctx, userID, newBalance); err != nil {
+		user := db.User{UID: userID, Balance: newBalance}
+		if err := user.InitBalance(ctx); err != nil {
 			return fmt.Errorf("error initializing user: %w", err)
 		}
 		slog.Info("User balance synced",
 			"userID", userID,
 			"user_dollars", strconv.FormatFloat(userData.Balance, 'f', 2, 64),
-			"user_tokens", numfmt.FormatLargeNumber(newBalance),
+			"user_tokens", numfmt.LargeNumber(newBalance),
 		)
 	}
 
@@ -262,7 +263,7 @@ func firestorePrintUser(ctx context.Context, userID string) error {
 		return fmt.Errorf("error getting ditto tokens per dollar: %w", err)
 	}
 	newBalance := int64(userData.Balance * float64(count))
-	slog.Info("User tokens", "ditto per dollar", count, "user_dollars", userData.Balance, "user_tokens", numfmt.FormatLargeNumber(newBalance))
+	slog.Info("User tokens", "ditto per dollar", count, "user_dollars", userData.Balance, "user_tokens", numfmt.LargeNumber(newBalance))
 
 	return nil
 }
@@ -511,13 +512,14 @@ func migrate(ctx context.Context) error {
 
 func applyMigration(ctx context.Context, file, version string) error {
 	migrationName := strings.TrimSuffix(filepath.Base(file), ".sql")
+	slog := slog.With("name", migrationName, "version", version)
 	var count int
 	err := db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE name = ?", migrationName).Scan(&count)
 	if err != nil {
 		return fmt.Errorf("error checking migration status: %w", err)
 	}
 	if count > 0 {
-		slog.Debug("migration already applied, skipping", "file", migrationName)
+		slog.Debug("migration already applied, skipping")
 		return nil
 	}
 
@@ -541,7 +543,7 @@ func applyMigration(ctx context.Context, file, version string) error {
 		return fmt.Errorf("error recording migration %s: %w", file, err)
 	}
 
-	slog.Debug("migration applied successfully", "file", migrationName)
+	slog.Debug("migration applied successfully")
 	return nil
 }
 
@@ -621,23 +623,36 @@ func applyRollback(ctx context.Context, file string) error {
 func splitSQLStatements(script string) []string {
 	var statements []string
 	var currentStatement strings.Builder
+	currentStatement.Grow(len(script))
 	var inString bool
 	var stringDelimiter rune
+	newlinesInRow := -1
 
 	for _, r := range script {
 		currentStatement.WriteRune(r)
-
-		switch {
-		case r == '\'' || r == '"':
+		switch r {
+		case '\'', '"':
 			if !inString {
 				inString = true
 				stringDelimiter = r
 			} else if stringDelimiter == r {
 				inString = false
 			}
-		case r == ';' && !inString:
-			statements = append(statements, strings.TrimSpace(currentStatement.String()))
-			currentStatement.Reset()
+		case ';':
+			if !inString {
+				newlinesInRow = 0
+			}
+		case '\n':
+			if !inString && newlinesInRow >= 0 {
+				newlinesInRow++
+				if newlinesInRow > 1 {
+					statements = append(statements, strings.TrimSpace(currentStatement.String()))
+					currentStatement.Reset()
+					newlinesInRow = -1
+				}
+			}
+		default:
+			newlinesInRow = -1
 		}
 	}
 
