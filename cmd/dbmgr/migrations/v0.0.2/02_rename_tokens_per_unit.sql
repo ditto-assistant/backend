@@ -54,14 +54,14 @@ END;
 
 INSERT INTO tokens_per_unit (name, count, updated_at) 
 VALUES ('image',(
-        SELECT ROUND(tpu.count * (svc.base_cost_per_image + svc.base_cost_per_call))
+        SELECT ROUND(tpu.count * (svc.base_cost_per_image + svc.base_cost_per_call) * (1 + svc.profit_margin_percentage / 100.0))
         FROM tokens_per_unit tpu, services svc
         WHERE tpu.name = 'dollar' AND svc.name = 'dall-e-3'
     ), CURRENT_TIMESTAMP);
 
 INSERT INTO tokens_per_unit (name, count, updated_at) 
 VALUES ('search',(
-        SELECT ROUND(tpu.count * (svc.base_cost_per_search + svc.base_cost_per_call))
+        SELECT ROUND(tpu.count * (svc.base_cost_per_search + svc.base_cost_per_call) * (1 + svc.profit_margin_percentage / 100.0))
         FROM tokens_per_unit tpu, services svc
         WHERE tpu.name = 'dollar' AND svc.name = 'brave-search'
     ), CURRENT_TIMESTAMP);
@@ -73,13 +73,13 @@ BEGIN
     -- Update or insert 'images' row (DALL-E 3 pricing)
     INSERT INTO tokens_per_unit (name, count, updated_at)
     VALUES ('image', (
-        SELECT ROUND(tpu.count * (NEW.base_cost_per_image + NEW.base_cost_per_call))
+        SELECT ROUND(tpu.count * (NEW.base_cost_per_image + NEW.base_cost_per_call) * (1 + NEW.profit_margin_percentage / 100.0))
         FROM tokens_per_unit tpu
         WHERE tpu.name = 'dollar'
     ), CURRENT_TIMESTAMP)
     ON CONFLICT(name) DO UPDATE SET
         count = ROUND((
-            SELECT tpu.count * (NEW.base_cost_per_image + NEW.base_cost_per_call)
+            SELECT tpu.count * (NEW.base_cost_per_image + NEW.base_cost_per_call) * (1 + NEW.profit_margin_percentage / 100.0)
             FROM tokens_per_unit tpu
             WHERE tpu.name = 'dollar'
         )),
@@ -88,13 +88,13 @@ BEGIN
     -- Update or insert 'searches' row (Brave Search pricing)
     INSERT INTO tokens_per_unit (name, count, updated_at)
     VALUES ('search', (
-        SELECT ROUND(tpu.count * (NEW.base_cost_per_search + NEW.base_cost_per_call))
+        SELECT ROUND(tpu.count * (NEW.base_cost_per_search + NEW.base_cost_per_call) * (1 + NEW.profit_margin_percentage / 100.0))
         FROM tokens_per_unit tpu
         WHERE tpu.name = 'dollar'
     ), CURRENT_TIMESTAMP)
     ON CONFLICT(name) DO UPDATE SET
         count = ROUND((
-            SELECT tpu.count * (NEW.base_cost_per_search + NEW.base_cost_per_call)
+            SELECT tpu.count * (NEW.base_cost_per_search + NEW.base_cost_per_call) * (1 + NEW.profit_margin_percentage / 100.0)
             FROM tokens_per_unit tpu
             WHERE tpu.name = 'dollar'
         )),
