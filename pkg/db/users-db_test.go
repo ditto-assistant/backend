@@ -23,7 +23,8 @@ func TestUserBalanceUpdateTrigger(t *testing.T) {
 	require.NoError(t, err, "Failed to set up database")
 
 	// Create a new user
-	user, err := db.GetOrCreateUser(ctx, "test@example.com")
+	user := db.User{UID: "test@example.com"}
+	err = user.GetByUID(ctx)
 	require.NoError(t, err, "Failed to create user")
 
 	// Set the user's balance to 10,000

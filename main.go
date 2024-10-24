@@ -177,8 +177,8 @@ func main() {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		user, err := db.GetOrCreateUser(ctx, bod.UserID)
-		if err != nil {
+		user := db.User{UID: bod.UserID}
+		if err := user.GetByUID(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -235,8 +235,8 @@ func main() {
 			return
 
 		}
-		user, err := db.GetOrCreateUser(ctx, bod.UserID)
-		if err != nil {
+		user := db.User{UID: bod.UserID}
+		if err := user.GetByUID(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -306,8 +306,8 @@ func main() {
 		if bod.NumResults == 0 {
 			bod.NumResults = 5
 		}
-		user, err := db.GetOrCreateUser(ctx, bod.UserID)
-		if err != nil {
+		user := db.User{UID: bod.UserID}
+		if err := user.GetByUID(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -393,8 +393,8 @@ func main() {
 		if bod.Model == "" {
 			bod.Model = llm.ModelDalle3
 		}
-		user, err := db.GetOrCreateUser(ctx, bod.UserID)
-		if err != nil {
+		user := db.User{UID: bod.UserID}
+		if err := user.GetByUID(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
