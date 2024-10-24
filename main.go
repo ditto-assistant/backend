@@ -523,27 +523,24 @@ func main() {
 			return
 		}
 		var q struct {
-			Balance   int64   `db:"balance"`
-			ImgTokens float64 `db:"base_cost_per_call"`
+			Balance  int64
+			Images   float64
+			Searches float64
+			Dollars  float64
 		}
 		err = db.D.QueryRowContext(ctx, `
 			SELECT users.balance,
-			       ROUND(users.balance / ((svc.base_cost_per_call + svc.base_cost_per_image) * tpd.count * (1 + svc.profit_margin_percentage / 100.0)))
-			FROM users,
-			     services AS svc,
-			     tokens_per_dollar AS tpd
+				   CAST(users.balance AS FLOAT) / (SELECT CAST(count AS FLOAT) FROM tokens_per_unit WHERE name = 'dollar'),
+				   (users.balance / (SELECT count FROM tokens_per_unit WHERE name = 'image')),
+				   (users.balance / (SELECT count FROM tokens_per_unit WHERE name = 'search'))
+			FROM users
 			WHERE uid = ?
-			  AND svc.name = 'dall-e-3'
-			  AND tpd.name = 'ditto'
-		`, bod.UserID).Scan(&q.Balance, &q.ImgTokens)
+		`, bod.UserID).Scan(&q.Balance, &q.Dollars, &q.Images, &q.Searches)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				slog.Warn("user not found, 0 balance", "uid", bod.UserID)
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(rp.BalanceV1{
-					Balance: "0",
-					Images:  "0",
-				})
+				json.NewEncoder(w).Encode(rp.BalanceV1{}.Zeroes())
 				return
 			}
 			slog.Error("failed to get balance", "uid", bod.UserID, "error", err)
@@ -551,8 +548,10 @@ func main() {
 			return
 		}
 		var rsp rp.BalanceV1
-		rsp.Balance = numfmt.FormatLargeNumber(q.Balance)
-		rsp.Images = numfmt.FormatLargeNumber(int64(q.ImgTokens))
+		rsp.Balance = numfmt.LargeNumber(q.Balance)
+		rsp.USD = numfmt.USD(q.Dollars)
+		rsp.Images = numfmt.LargeNumber(int64(q.Images))
+		rsp.Searches = numfmt.LargeNumber(int64(q.Searches))
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(rsp)
 	})

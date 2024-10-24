@@ -3,11 +3,20 @@ package numfmt
 import (
 	"fmt"
 	"math"
+	"strconv"
 )
 
-// FormatLargeNumber formats an int64 into a string representation using K, M, B, T, Q suffixes.
+// USD formats a float64 into a string representation using $ and two decimal places.
+func USD(n float64) string {
+	if n < 0 {
+		return "-$" + strconv.FormatFloat(-n, 'f', 2, 64)
+	}
+	return "$" + strconv.FormatFloat(n, 'f', 2, 64)
+}
+
+// LargeNumber formats an int64 into a string representation using K, M, B, T, Q suffixes.
 // It handles negative numbers and rounds to two decimal places.
-func FormatLargeNumber(n int64) string {
+func LargeNumber(n int64) string {
 	// Handle negative numbers
 	sign := ""
 	if n < 0 {
