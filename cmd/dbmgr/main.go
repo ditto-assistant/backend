@@ -623,23 +623,36 @@ func applyRollback(ctx context.Context, file string) error {
 func splitSQLStatements(script string) []string {
 	var statements []string
 	var currentStatement strings.Builder
+	currentStatement.Grow(len(script))
 	var inString bool
 	var stringDelimiter rune
+	newlinesInRow := -1
 
 	for _, r := range script {
 		currentStatement.WriteRune(r)
-
-		switch {
-		case r == '\'' || r == '"':
+		switch r {
+		case '\'', '"':
 			if !inString {
 				inString = true
 				stringDelimiter = r
 			} else if stringDelimiter == r {
 				inString = false
 			}
-		case r == ';' && !inString:
-			statements = append(statements, strings.TrimSpace(currentStatement.String()))
-			currentStatement.Reset()
+		case ';':
+			if !inString {
+				newlinesInRow = 0
+			}
+		case '\n':
+			if !inString && newlinesInRow >= 0 {
+				newlinesInRow++
+				if newlinesInRow > 1 {
+					statements = append(statements, strings.TrimSpace(currentStatement.String()))
+					currentStatement.Reset()
+					newlinesInRow = -1
+				}
+			}
+		default:
+			newlinesInRow = -1
 		}
 	}
 
