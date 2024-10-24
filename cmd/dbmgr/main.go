@@ -511,13 +511,14 @@ func migrate(ctx context.Context) error {
 
 func applyMigration(ctx context.Context, file, version string) error {
 	migrationName := strings.TrimSuffix(filepath.Base(file), ".sql")
+	slog := slog.With("name", migrationName, "version", version)
 	var count int
 	err := db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE name = ?", migrationName).Scan(&count)
 	if err != nil {
 		return fmt.Errorf("error checking migration status: %w", err)
 	}
 	if count > 0 {
-		slog.Debug("migration already applied, skipping", "file", migrationName)
+		slog.Debug("migration already applied, skipping")
 		return nil
 	}
 
@@ -541,7 +542,7 @@ func applyMigration(ctx context.Context, file, version string) error {
 		return fmt.Errorf("error recording migration %s: %w", file, err)
 	}
 
-	slog.Debug("migration applied successfully", "file", migrationName)
+	slog.Debug("migration applied successfully")
 	return nil
 }
 
