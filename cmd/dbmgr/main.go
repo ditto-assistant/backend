@@ -179,7 +179,7 @@ func syncBalance(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("error getting ditto tokens per dollar: %w", err)
 	}
-	slog.Debug("ditto tokens per dollar", "count", numfmt.FormatLargeNumber(count))
+	slog.Debug("ditto tokens per dollar", "count", numfmt.LargeNumber(count))
 	app, err := firebase.NewApp(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("error creating firebase app: %w", err)
@@ -213,7 +213,7 @@ func syncBalance(ctx context.Context) error {
 		slog.Info("User balance synced",
 			"userID", userID,
 			"user_dollars", strconv.FormatFloat(userData.Balance, 'f', 2, 64),
-			"user_tokens", numfmt.FormatLargeNumber(newBalance),
+			"user_tokens", numfmt.LargeNumber(newBalance),
 		)
 	}
 
@@ -263,7 +263,7 @@ func firestorePrintUser(ctx context.Context, userID string) error {
 		return fmt.Errorf("error getting ditto tokens per dollar: %w", err)
 	}
 	newBalance := int64(userData.Balance * float64(count))
-	slog.Info("User tokens", "ditto per dollar", count, "user_dollars", userData.Balance, "user_tokens", numfmt.FormatLargeNumber(newBalance))
+	slog.Info("User tokens", "ditto per dollar", count, "user_dollars", userData.Balance, "user_tokens", numfmt.LargeNumber(newBalance))
 
 	return nil
 }
