@@ -8,3 +8,4 @@ Dockerfile
 .github
 go.work
 go.work.sum
+tests/

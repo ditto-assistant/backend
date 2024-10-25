@@ -20,6 +20,8 @@ const (
 	ModelClaude35Sonnet ServiceName = "claude-3-5-sonnet"
 	// ModelDalle3 is OpenAI's DALL-E 3 model.
 	ModelDalle3 ServiceName = "dall-e-3"
+	// ModelMistralNemo is Mistral's nemo model.
+	ModelMistralNemo ServiceName = "mistral-nemo"
 )
 
 // Search Engines

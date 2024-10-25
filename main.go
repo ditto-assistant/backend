@@ -23,6 +23,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/llm/claude"
 	"github.com/ditto-assistant/backend/pkg/llm/gemini"
 	"github.com/ditto-assistant/backend/pkg/llm/googai"
+	"github.com/ditto-assistant/backend/pkg/llm/mistral"
 	"github.com/ditto-assistant/backend/pkg/llm/openai"
 	"github.com/ditto-assistant/backend/pkg/numfmt"
 	"github.com/ditto-assistant/backend/pkg/search/brave"
@@ -151,6 +152,14 @@ func main() {
 			}
 		case llm.ModelGemini15Pro:
 			m := gemini.ModelGemini15Pro
+			err = m.Prompt(ctx, bod, &rsp)
+			if err != nil {
+				slog.Error("failed to prompt "+m.PrettyStr(), "error", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		case llm.ModelMistralNemo:
+			m := mistral.ModelMistralNemo
 			err = m.Prompt(ctx, bod, &rsp)
 			if err != nil {
 				slog.Error("failed to prompt "+m.PrettyStr(), "error", err)
