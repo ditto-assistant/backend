@@ -19,9 +19,9 @@ import (
 )
 
 const baseURL = "https://us-east5-aiplatform.googleapis.com/v1/projects/%s/locations/us-east5/publishers/anthropic/models/%s:streamRawPredict"
-const Model = llm.ModelClaude35Sonnet
-const Version = "20240620"
-const TaggedModel = llm.ModelClaude35Sonnet + "@" + Version
+const Model = llm.ModelClaude35SonnetV2
+const Version = "20241022"
+const TaggedModel = llm.ModelClaude35SonnetV2 + "@" + Version
 
 var requestUrl string
 

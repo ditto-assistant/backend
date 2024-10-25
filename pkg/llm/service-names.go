@@ -18,6 +18,8 @@ const (
 	ModelGemini15Pro ServiceName = "gemini-1.5-pro"
 	// ModelClaude35Sonnet is Anthropic's Claude 3.5 Sonnet model.
 	ModelClaude35Sonnet ServiceName = "claude-3-5-sonnet"
+	// ModelClaude35SonnetV2 is Anthropic's Claude 3.5 Sonnet model.
+	ModelClaude35SonnetV2 ServiceName = "claude-3-5-sonnet-v2"
 	// ModelDalle3 is OpenAI's DALL-E 3 model.
 	ModelDalle3 ServiceName = "dall-e-3"
 )
