@@ -139,12 +139,18 @@ func (m Model) Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamRe
 	req := Request{
 		Contents: contents,
 		GenerationConfig: GenerationConfig{
-			Temperature:     0.9,
-			TopK:            1,
-			TopP:            1,
-			MaxOutputTokens: 2048,
+			Temperature:     0.95, // Increased for more creativity
+			TopK:            40,   // Increased for more diverse options
+			TopP:            0.95, // Slightly reduced for more focused yet creative responses
+			MaxOutputTokens: 8192,
 		},
 		SystemInstruction: systemInstruction,
+		SafetySettings: []SafetySetting{
+			{
+				Category:  "HARM_CATEGORY_DANGEROUS_CONTENT",
+				Threshold: "BLOCK_ONLY_HIGH",
+			},
+		},
 	}
 
 	var buf bytes.Buffer
