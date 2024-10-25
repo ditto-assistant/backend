@@ -14,7 +14,6 @@ import (
 	"github.com/ditto-assistant/backend/pkg/img"
 	"github.com/ditto-assistant/backend/pkg/llm"
 	"github.com/ditto-assistant/backend/types/rq"
-	"github.com/ditto-assistant/backend/types/ty"
 	"golang.org/x/oauth2/google"
 )
 
@@ -73,14 +72,6 @@ func init() {
 	requestUrl = fmt.Sprintf(baseURL, envs.GCLOUD_PROJECT, TaggedModel)
 }
 
-type Token ty.Result[string]
-
-type Response struct {
-	Text         <-chan Token
-	InputTokens  int
-	OutputTokens int
-}
-
 type EvMsgStart struct {
 	Type    string `json:"type"`
 	Message struct {
@@ -109,7 +100,7 @@ type EvMsgDelta struct {
 
 // TODO: Add Prompt options, such as message array, last message role is assistant, etc.
 
-func (rsp *Response) Prompt(ctx context.Context, prompt rq.PromptV1) error {
+func Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) error {
 	messages := make([]Message, 0, 1)
 	userContentCount := 1
 	if prompt.ImageURL != "" {
@@ -117,17 +108,16 @@ func (rsp *Response) Prompt(ctx context.Context, prompt rq.PromptV1) error {
 	}
 	userMessage := Message{Role: "user", Content: make([]Content, 0, userContentCount)}
 	if prompt.ImageURL != "" {
-		base64Image, err := img.GetBase64(ctx, prompt.ImageURL)
+		imageData, err := img.GetImageData(ctx, prompt.ImageURL)
 		if err != nil {
-			return fmt.Errorf("error getting base64 image: %w", err)
+			return fmt.Errorf("error getting image data: %w", err)
 		}
 		userMessage.Content = append(userMessage.Content, Content{
 			Type: "image",
 			Source: map[string]string{
-				"type": "base64",
-				// TODO: DETECT IMAGE TYPE
-				"media_type": "image/png", // Adjust this if needed based on the actual image type
-				"data":       base64Image,
+				"type":       "base64",
+				"media_type": imageData.MimeType,
+				"data":       imageData.Base64,
 			},
 		})
 	}
@@ -179,7 +169,7 @@ func (rsp *Response) Prompt(ctx context.Context, prompt rq.PromptV1) error {
 		return fmt.Errorf("error response from API: status %d, body: %s", resp.StatusCode, string(body))
 	}
 
-	tokenChan := make(chan Token)
+	tokenChan := make(chan llm.Token)
 	rsp.Text = tokenChan
 
 	go func() {
@@ -197,12 +187,12 @@ func (rsp *Response) Prompt(ctx context.Context, prompt rq.PromptV1) error {
 			switch eventType {
 			case "message_start", "content_block_delta", "message_delta":
 				if !scanner.Scan() {
-					tokenChan <- Token{Err: fmt.Errorf("unexpected end of stream after event: %s", eventType)}
+					tokenChan <- llm.Token{Err: fmt.Errorf("unexpected end of stream after event: %s", eventType)}
 					return
 				}
 				data := scanner.Bytes()
 				if !bytes.HasPrefix(data, dataPrefix) {
-					tokenChan <- Token{Err: fmt.Errorf("expected data line after event, got: %s", data)}
+					tokenChan <- llm.Token{Err: fmt.Errorf("expected data line after event, got: %s", data)}
 					return
 				}
 				data = bytes.TrimPrefix(data, dataPrefix)
@@ -211,7 +201,7 @@ func (rsp *Response) Prompt(ctx context.Context, prompt rq.PromptV1) error {
 				case "message_start":
 					var msgStart EvMsgStart
 					if err := json.Unmarshal(data, &msgStart); err != nil {
-						tokenChan <- Token{Err: fmt.Errorf("error parsing message_start event: %w", err)}
+						tokenChan <- llm.Token{Err: fmt.Errorf("error parsing message_start event: %w", err)}
 						return
 					}
 					rsp.InputTokens += msgStart.Message.Usage.InputTokens
@@ -220,15 +210,15 @@ func (rsp *Response) Prompt(ctx context.Context, prompt rq.PromptV1) error {
 				case "content_block_delta":
 					var contentDelta EvContentBlockDelta
 					if err := json.Unmarshal(data, &contentDelta); err != nil {
-						tokenChan <- Token{Err: fmt.Errorf("error parsing content_block_delta event: %w", err)}
+						tokenChan <- llm.Token{Err: fmt.Errorf("error parsing content_block_delta event: %w", err)}
 						return
 					}
-					tokenChan <- Token{Ok: contentDelta.Delta.Text}
+					tokenChan <- llm.Token{Ok: contentDelta.Delta.Text}
 
 				case "message_delta":
 					var msgDelta EvMsgDelta
 					if err := json.Unmarshal(data, &msgDelta); err != nil {
-						tokenChan <- Token{Err: fmt.Errorf("error parsing message_delta event: %w", err)}
+						tokenChan <- llm.Token{Err: fmt.Errorf("error parsing message_delta event: %w", err)}
 						return
 					}
 					rsp.OutputTokens += msgDelta.Usage.OutputTokens
@@ -241,7 +231,7 @@ func (rsp *Response) Prompt(ctx context.Context, prompt rq.PromptV1) error {
 		}
 
 		if err := scanner.Err(); err != nil {
-			tokenChan <- Token{Err: fmt.Errorf("error reading stream: %w", err)}
+			tokenChan <- llm.Token{Err: fmt.Errorf("error reading stream: %w", err)}
 		}
 	}()
 

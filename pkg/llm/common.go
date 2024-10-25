@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/ditto-assistant/backend/types/ty"
 	"golang.org/x/oauth2/google"
 )
 
@@ -16,10 +17,7 @@ type StreamResponse struct {
 	OutputTokens int
 }
 
-type Token struct {
-	Ok  string
-	Err error
-}
+type Token = ty.Result[string]
 
 func GetAccessToken(ctx context.Context) (string, error) {
 	tokenSource, err := google.DefaultTokenSource(ctx, "https://www.googleapis.com/auth/cloud-platform")

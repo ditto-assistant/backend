@@ -97,14 +97,14 @@ func (m Model) Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamRe
 	}
 
 	if prompt.ImageURL != "" {
-		base64Image, err := img.GetBase64(ctx, prompt.ImageURL)
+		imageData, err := img.GetImageData(ctx, prompt.ImageURL)
 		if err != nil {
-			return fmt.Errorf("error getting base64 image: %w", err)
+			return fmt.Errorf("error getting image data: %w", err)
 		}
 		contents[0].Parts = append(contents[0].Parts, Part{
 			InlineData: &InlineData{
-				MimeType: "image/jpeg", // Adjust this if needed based on the actual image type
-				Data:     base64Image,
+				MimeType: imageData.MimeType,
+				Data:     imageData.Base64,
 			},
 		})
 	}

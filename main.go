@@ -21,6 +21,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/llm"
 	"github.com/ditto-assistant/backend/pkg/llm/claude"
+	"github.com/ditto-assistant/backend/pkg/llm/gemini"
 	"github.com/ditto-assistant/backend/pkg/llm/googai"
 	"github.com/ditto-assistant/backend/pkg/llm/openai"
 	"github.com/ditto-assistant/backend/pkg/numfmt"
@@ -80,8 +81,6 @@ func main() {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
 
-
-
 	go func() {
 		err := genkit.Init(bgCtx, &genkit.Options{FlowAddr: "-"})
 		if err != nil {
@@ -119,32 +118,64 @@ func main() {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
+		slog := slog.With("user_id", bod.UserID, "model", bod.Model)
 		user := db.User{UID: bod.UserID}
 		if err := user.GetByUID(ctx); err != nil {
+			slog.Error("failed to get user", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if user.Balance <= 0 {
+			slog.Error("user balance is 0", "balance", user.Balance)
 			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 			return
 		}
 
-		var rsp claude.Response
-		err = rsp.Prompt(ctx, bod)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		for token := range rsp.Text {
-			if token.Err != nil {
-				http.Error(w, token.Err.Error(), http.StatusInternalServerError)
+		var rsp llm.StreamResponse
+		switch bod.Model {
+		case llm.ModelClaude35Sonnet:
+			err = claude.Prompt(ctx, bod, &rsp)
+			if err != nil {
+				slog.Error("failed to prompt Claude", "error", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			fmt.Fprint(w, token.Ok)
+			for token := range rsp.Text {
+				if token.Err != nil {
+					slog.Error("error in Claude response", "error", token.Err)
+					http.Error(w, token.Err.Error(), http.StatusInternalServerError)
+					return
+				}
+				fmt.Fprint(w, token.Ok)
+			}
+
+		case llm.ModelGemini15Flash:
+			m := gemini.ModelGemini15Flash
+			err = m.Prompt(ctx, bod, &rsp)
+			if err != nil {
+				slog.Error("failed to prompt "+m.PrettyStr(), "error", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+		case llm.ModelGemini15Pro:
+			m := gemini.ModelGemini15Pro
+			err = m.Prompt(ctx, bod, &rsp)
+			if err != nil {
+				slog.Error("failed to prompt "+m.PrettyStr(), "error", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+		default:
+			slog.Info("unsupported model", "model", bod.Model)
+			http.Error(w, fmt.Sprintf("unsupported model: %s", bod.Model), http.StatusBadRequest)
+			return
 		}
 
 		shutdownWG.Add(1)
 		go func() {
+			slog.Info("inserting receipt", "input_tokens", rsp.InputTokens, "output_tokens", rsp.OutputTokens)
 			defer shutdownWG.Done()
 			ctx, cancel := context.WithTimeout(bgCtx, 15*time.Second)
 			defer cancel()
@@ -152,7 +183,7 @@ func main() {
 				UserID:       user.ID,
 				InputTokens:  int64(rsp.InputTokens),
 				OutputTokens: int64(rsp.OutputTokens),
-				ServiceName:  llm.ModelClaude35Sonnet,
+				ServiceName:  bod.Model,
 			}
 			if err := receipt.Insert(ctx); err != nil {
 				slog.Error("failed to insert receipt", "error", err)
