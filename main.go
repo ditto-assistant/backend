@@ -119,6 +119,7 @@ func main() {
 			return
 		}
 		slog := slog.With("user_id", bod.UserID, "model", bod.Model)
+		slog.Debug("Prompt Request")
 		user := db.User{UID: bod.UserID}
 		if err := user.GetByUID(ctx); err != nil {
 			slog.Error("failed to get user", "error", err)
@@ -140,15 +141,6 @@ func main() {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			for token := range rsp.Text {
-				if token.Err != nil {
-					slog.Error("error in Claude response", "error", token.Err)
-					http.Error(w, token.Err.Error(), http.StatusInternalServerError)
-					return
-				}
-				fmt.Fprint(w, token.Ok)
-			}
-
 		case llm.ModelGemini15Flash:
 			m := gemini.ModelGemini15Flash
 			err = m.Prompt(ctx, bod, &rsp)
@@ -157,7 +149,6 @@ func main() {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-
 		case llm.ModelGemini15Pro:
 			m := gemini.ModelGemini15Pro
 			err = m.Prompt(ctx, bod, &rsp)
@@ -166,11 +157,17 @@ func main() {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-
 		default:
 			slog.Info("unsupported model", "model", bod.Model)
 			http.Error(w, fmt.Sprintf("unsupported model: %s", bod.Model), http.StatusBadRequest)
 			return
+		}
+		for token := range rsp.Text {
+			if token.Err != nil {
+				http.Error(w, token.Err.Error(), http.StatusInternalServerError)
+				return
+			}
+			fmt.Fprint(w, token.Ok)
 		}
 
 		shutdownWG.Add(1)

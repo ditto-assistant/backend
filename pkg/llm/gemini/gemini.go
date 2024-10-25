@@ -59,7 +59,22 @@ type Content struct {
 }
 
 type Request struct {
-	Contents []Content `json:"contents"`
+	Contents          []Content        `json:"contents"`
+	GenerationConfig  GenerationConfig `json:"generationConfig,omitempty"`
+	SafetySettings    []SafetySetting  `json:"safetySettings,omitempty"`
+	SystemInstruction *Content         `json:"systemInstruction,omitempty"`
+}
+
+type GenerationConfig struct {
+	Temperature     float64 `json:"temperature,omitempty"`
+	TopP            float64 `json:"topP,omitempty"`
+	TopK            int     `json:"topK,omitempty"`
+	MaxOutputTokens int     `json:"maxOutputTokens,omitempty"`
+}
+
+type SafetySetting struct {
+	Category  string `json:"category"`
+	Threshold string `json:"threshold"`
 }
 
 type Response struct {
@@ -91,16 +106,29 @@ type SafetyRating struct {
 
 func (m Model) Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) error {
 	requestURL = fmt.Sprintf(baseURL, envs.GCLOUD_PROJECT, m)
-	contents := []Content{
-		{Role: "user", Parts: []Part{{Text: prompt.UserPrompt}}},
+	contents := []Content{}
+
+	// Handle system instruction as a Content type
+	var systemInstruction *Content
+	if prompt.SystemPrompt != "" {
+		systemInstruction = &Content{
+			Role:  "model",
+			Parts: []Part{{Text: prompt.SystemPrompt}},
+		}
 	}
+
+	// Add user prompt to contents
+	contents = append(contents, Content{
+		Role:  "user",
+		Parts: []Part{{Text: prompt.UserPrompt}},
+	})
 
 	if prompt.ImageURL != "" {
 		imageData, err := img.GetImageData(ctx, prompt.ImageURL)
 		if err != nil {
 			return fmt.Errorf("error getting image data: %w", err)
 		}
-		contents[0].Parts = append(contents[0].Parts, Part{
+		contents[len(contents)-1].Parts = append(contents[len(contents)-1].Parts, Part{
 			InlineData: &InlineData{
 				MimeType: imageData.MimeType,
 				Data:     imageData.Base64,
@@ -108,11 +136,17 @@ func (m Model) Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamRe
 		})
 	}
 
-	if prompt.SystemPrompt != "" {
-		contents = append([]Content{{Role: "system", Parts: []Part{{Text: prompt.SystemPrompt}}}}, contents...)
+	req := Request{
+		Contents: contents,
+		GenerationConfig: GenerationConfig{
+			Temperature:     0.9,
+			TopK:            1,
+			TopP:            1,
+			MaxOutputTokens: 2048,
+		},
+		SystemInstruction: systemInstruction,
 	}
 
-	req := Request{Contents: contents}
 	var buf bytes.Buffer
 	err := json.NewEncoder(&buf).Encode(req)
 	if err != nil {
