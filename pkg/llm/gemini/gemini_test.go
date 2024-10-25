@@ -122,3 +122,43 @@ func TestImage(t *testing.T) {
 	}
 	t.Logf("InputTokens: %d, OutputTokens: %d", rsp.InputTokens, rsp.OutputTokens)
 }
+
+func TestSystemInstruction(t *testing.T) {
+	ctx := context.Background()
+	systemPrompt := "Always respond with 1 token"
+	userPrompt := "Tell me a story"
+
+	var rsp llm.StreamResponse
+	err := gemini.ModelGemini15Pro.Prompt(ctx, rq.PromptV1{
+		SystemPrompt: systemPrompt,
+		UserPrompt:   userPrompt,
+	}, &rsp)
+	if err != nil {
+		t.Fatalf("Error calling Prompt: %v", err)
+	}
+
+	fmt.Println("Gemini's response:")
+	responseTokens := 0
+	for token := range rsp.Text {
+		if token.Err != nil {
+			t.Fatalf("Error in response: %v", token.Err)
+		}
+		fmt.Print(token.Ok)
+		os.Stdout.Sync()
+		responseTokens++
+	}
+	fmt.Println() // Add a newline at the end
+
+	if responseTokens != 1 {
+		t.Errorf("Expected 1 token, got %d tokens", responseTokens)
+	}
+
+	// Check token counts after all tokens have been received
+	if rsp.InputTokens == 0 {
+		t.Fatalf("InputTokens is 0")
+	}
+	if rsp.OutputTokens == 0 {
+		t.Fatalf("OutputTokens is 0")
+	}
+	t.Logf("InputTokens: %d, OutputTokens: %d", rsp.InputTokens, rsp.OutputTokens)
+}
