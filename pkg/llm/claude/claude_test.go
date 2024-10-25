@@ -6,6 +6,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/ditto-assistant/backend/pkg/llm"
 	"github.com/ditto-assistant/backend/pkg/llm/claude"
 	"github.com/ditto-assistant/backend/types/rq"
 )
@@ -14,10 +15,10 @@ func TestPrompt(t *testing.T) {
 	ctx := context.Background()
 	prompt := "Please respond with a random single token of text."
 
-	var rsp claude.Response
-	err := rsp.Prompt(ctx, rq.PromptV1{
+	var rsp llm.StreamResponse
+	err := claude.Prompt(ctx, rq.PromptV1{
 		UserPrompt: prompt,
-	})
+	}, &rsp)
 	if err != nil {
 		t.Fatalf("Error calling Prompt: %v", err)
 	}
@@ -48,10 +49,10 @@ func TestLongPrompt(t *testing.T) {
 	ctx := context.Background()
 	prompt := "Tell a story about a cat named Hat."
 
-	var rsp claude.Response
-	err := rsp.Prompt(ctx, rq.PromptV1{
+	var rsp llm.StreamResponse
+	err := claude.Prompt(ctx, rq.PromptV1{
 		UserPrompt: prompt,
-	})
+	}, &rsp)
 	if err != nil {
 		t.Fatalf("Error calling Prompt: %v", err)
 	}
@@ -82,11 +83,11 @@ func TestImage(t *testing.T) {
 	ctx := context.Background()
 	prompt := "Describe the damage in this image and estimate the cost to repair it."
 
-	var rsp claude.Response
-	err := rsp.Prompt(ctx, rq.PromptV1{
+	var rsp llm.StreamResponse
+	err := claude.Prompt(ctx, rq.PromptV1{
 		UserPrompt: prompt,
 		ImageURL:   "https://f005.backblazeb2.com/file/public-test-files-garage-weasel/olive_test_images/shower_tile_2/after.jpeg",
-	})
+	}, &rsp)
 	if err != nil {
 		t.Fatalf("Error calling Prompt: %v", err)
 	}
