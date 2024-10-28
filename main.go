@@ -516,7 +516,6 @@ func main() {
 					UID:                bod.UserID,
 					Balance:            airdropTokens,
 					TotalTokensAirdrop: airdropTokens,
-					LastAirdropAt:      time.Now(),
 				}
 				if err := user.Insert(ctx); err != nil {
 					slog.Error("failed to insert user", "uid", bod.UserID, "error", err)

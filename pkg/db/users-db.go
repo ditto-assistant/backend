@@ -22,8 +22,8 @@ type User struct {
 // It updates the User's ID with the ID from the database.
 func (u *User) Insert(ctx context.Context) error {
 	res, err := D.ExecContext(ctx,
-		"INSERT INTO users (uid, balance, total_tokens_airdropped, last_airdrop_at) VALUES (?, ?, ?, ?)",
-		u.UID, u.Balance, u.TotalTokensAirdrop, u.LastAirdropAt)
+		"INSERT INTO users (uid, balance, total_tokens_airdropped, last_airdrop_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+		u.UID, u.Balance, u.TotalTokensAirdrop)
 	if err != nil {
 		return err
 	}
