@@ -11,15 +11,19 @@ import (
 )
 
 type User struct {
-	ID      int64
-	UID     string
-	Balance int64
+	ID                 int64
+	UID                string
+	Balance            int64
+	LastAirdropAt      time.Time
+	TotalTokensAirdrop int64
 }
 
 // Insert inserts a new user into the database.
 // It updates the User's ID with the ID from the database.
 func (u *User) Insert(ctx context.Context) error {
-	res, err := D.ExecContext(ctx, "INSERT INTO users (uid, balance) VALUES (?, ?)", u.UID, u.Balance)
+	res, err := D.ExecContext(ctx,
+		"INSERT INTO users (uid, balance, total_tokens_airdropped, last_airdrop_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+		u.UID, u.Balance, u.TotalTokensAirdrop)
 	if err != nil {
 		return err
 	}

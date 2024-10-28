@@ -465,6 +465,8 @@ func main() {
 		}
 	})
 
+	// Aidrop tokens every 24 hours when the user logs in
+	const airdropTokens = 20_000_000
 	mux.HandleFunc("GET /v1/balance", func(w http.ResponseWriter, r *http.Request) {
 		tok, err := fbAuth.VerifyToken(r)
 		if err != nil {
@@ -481,6 +483,45 @@ func main() {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
+		var q1 struct {
+			ID            int64
+			LastAirdropAt sql.NullTime
+		}
+		err = db.D.QueryRowContext(ctx, `
+			SELECT id, last_airdrop_at FROM users WHERE uid = ?
+		`, bod.UserID).Scan(&q1.ID, &q1.LastAirdropAt)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				user := db.User{
+					UID:                bod.UserID,
+					Balance:            airdropTokens,
+					TotalTokensAirdrop: airdropTokens,
+				}
+				if err := user.Insert(ctx); err != nil {
+					slog.Error("failed to insert user", "uid", bod.UserID, "error", err)
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			} else {
+				slog.Error("failed to get user", "uid", bod.UserID, "error", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		if !q1.LastAirdropAt.Valid || time.Since(q1.LastAirdropAt.Time) > 24*time.Hour {
+			_, err = db.D.ExecContext(ctx, `
+				UPDATE users SET
+					balance = balance + ?,
+					total_tokens_airdropped = total_tokens_airdropped + ?,
+					last_airdrop_at = CURRENT_TIMESTAMP
+				WHERE id = ?
+			`, airdropTokens, airdropTokens, q1.ID)
+			if err != nil {
+				slog.Error("failed to airdrop tokens", "uid", bod.UserID, "error", err)
+			}
+			slog.Info("airdropped tokens", "uid", bod.UserID, "tokens", airdropTokens)
+		}
+
 		var q struct {
 			Balance  int64
 			Images   float64
@@ -494,8 +535,8 @@ func main() {
 				   (users.balance / (SELECT count FROM tokens_per_unit WHERE name = 'image')),
 				   (users.balance / (SELECT count FROM tokens_per_unit WHERE name = 'search'))
 			FROM users
-			WHERE uid = ?
-		`, bod.UserID).Scan(&q.Balance, &q.Dollars, &q.Images, &q.Searches)
+			WHERE id = ?`, q1.ID).
+			Scan(&q.Balance, &q.Dollars, &q.Images, &q.Searches)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				slog.Warn("user not found, 0 balance", "uid", bod.UserID)
