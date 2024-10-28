@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/ditto-assistant/backend/cfg/secr"
+	"github.com/ditto-assistant/backend/pkg/api/stripe"
 	"github.com/ditto-assistant/backend/pkg/db"
+	"github.com/ditto-assistant/backend/pkg/fbase"
 	"github.com/ditto-assistant/backend/pkg/llm"
 	"github.com/ditto-assistant/backend/pkg/llm/claude"
 	"github.com/ditto-assistant/backend/pkg/llm/gemini"
@@ -29,8 +31,6 @@ import (
 	"github.com/ditto-assistant/backend/pkg/search/brave"
 	"github.com/ditto-assistant/backend/types/rp"
 	"github.com/ditto-assistant/backend/types/rq"
-	"github.com/firebase/genkit/go/genkit"
-	"github.com/firebase/genkit/go/plugins/firebase"
 	"github.com/firebase/genkit/go/plugins/vertexai"
 	"github.com/rs/cors"
 	"google.golang.org/api/customsearch/v1"
@@ -58,36 +58,10 @@ func main() {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
 
-	firebaseAuth, err := firebase.NewAuth(bgCtx, func(authContext genkit.AuthContext, input any) error {
-		in, ok := input.(rq.HasUserID) // The type must match the input type of the flow.
-		if !ok {
-			return fmt.Errorf("request body type is incorrect: %T", input)
-		}
-		uidIn := in.GetUserID()
-		if len(authContext) == 0 {
-			return fmt.Errorf("authContext is empty; input uid: %s", uidIn)
-		}
-		uidAuth, ok := authContext["uid"]
-		if !ok {
-			return fmt.Errorf("authContext missing uid: %v", authContext)
-		}
-		if uidAuth, ok := uidAuth.(string); !ok {
-			return fmt.Errorf("authContext uid is not a string: %v", uidAuth)
-		} else if uidAuth != uidIn {
-			return fmt.Errorf("user ID does not match: authContext uid: %v != input uid: %s", uidAuth, uidIn)
-		}
-		return nil
-	}, true)
+	fbAuth, err := fbase.NewAuth(bgCtx)
 	if err != nil {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
-
-	go func() {
-		err := genkit.Init(bgCtx, &genkit.Options{FlowAddr: "-"})
-		if err != nil {
-			log.Fatalf("failed to initialize genkit: %v", err)
-		}
-	}()
 
 	corsMiddleware := cors.New(cors.Options{
 		AllowedOrigins: []string{
@@ -104,7 +78,7 @@ func main() {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
-		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
+		tok, err := fbAuth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -114,7 +88,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		err = firebaseAuth.CheckAuthPolicy(ctx, bod)
+		err = tok.Check(bod)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -122,6 +96,7 @@ func main() {
 		slog := slog.With("user_id", bod.UserID, "model", bod.Model)
 		slog.Debug("Prompt Request")
 		user := db.User{UID: bod.UserID}
+		ctx := r.Context()
 		if err := user.GetByUID(ctx); err != nil {
 			slog.Error("failed to get user", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -198,7 +173,7 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /v1/embed", func(w http.ResponseWriter, r *http.Request) {
-		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
+		tok, err := fbAuth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -208,13 +183,14 @@ func main() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		err = firebaseAuth.CheckAuthPolicy(ctx, bod)
+		err = tok.Check(bod)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 
 		}
 		user := db.User{UID: bod.UserID}
+		ctx := r.Context()
 		if err := user.GetByUID(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -263,7 +239,7 @@ func main() {
 		log.Fatalf("failed to initialize custom search: %s", err)
 	}
 	mux.HandleFunc("POST /v1/google-search", func(w http.ResponseWriter, r *http.Request) {
-		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
+		tok, err := fbAuth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -277,7 +253,7 @@ func main() {
 			}
 			return
 		}
-		err = firebaseAuth.CheckAuthPolicy(ctx, bod)
+		err = tok.Check(bod)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -286,6 +262,7 @@ func main() {
 			bod.NumResults = 5
 		}
 		user := db.User{UID: bod.UserID}
+		ctx := r.Context()
 		if err := user.GetByUID(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -354,7 +331,7 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /v1/generate-image", func(w http.ResponseWriter, r *http.Request) {
-		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
+		tok, err := fbAuth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -364,7 +341,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		err = firebaseAuth.CheckAuthPolicy(ctx, bod)
+		err = tok.Check(bod)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -373,6 +350,7 @@ func main() {
 			bod.Model = llm.ModelDalle3
 		}
 		user := db.User{UID: bod.UserID}
+		ctx := r.Context()
 		if err := user.GetByUID(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -455,7 +433,7 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /v1/search-examples", func(w http.ResponseWriter, r *http.Request) {
-		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
+		tok, err := fbAuth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -465,13 +443,14 @@ func main() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		err = firebaseAuth.CheckAuthPolicy(ctx, bod)
+		err = tok.Check(bod)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 		}
 		if bod.K == 0 {
 			bod.K = 5
 		}
+		ctx := r.Context()
 		examples, err := db.SearchExamples(ctx, bod.Embedding, db.WithK(bod.K))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -486,7 +465,7 @@ func main() {
 	})
 
 	mux.HandleFunc("GET /v1/balance", func(w http.ResponseWriter, r *http.Request) {
-		ctx, err := firebaseAuth.ProvideAuthContext(r.Context(), r.Header.Get("Authorization"))
+		tok, err := fbAuth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -496,7 +475,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		err = firebaseAuth.CheckAuthPolicy(ctx, bod)
+		err = tok.Check(bod)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -507,6 +486,7 @@ func main() {
 			Searches float64
 			Dollars  float64
 		}
+		ctx := r.Context()
 		err = db.D.QueryRowContext(ctx, `
 			SELECT users.balance,
 				   CAST(users.balance AS FLOAT) / (SELECT CAST(count AS FLOAT) FROM tokens_per_unit WHERE name = 'dollar'),
@@ -534,6 +514,8 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(rsp)
 	})
+
+	mux.HandleFunc("POST /v1/stripe/checkout-session", stripe.CreateCheckoutSession)
 
 	handler := corsMiddleware.Handler(mux)
 	server := &http.Server{

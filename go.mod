@@ -3,9 +3,11 @@ module github.com/ditto-assistant/backend
 go 1.23.2
 
 require (
+	firebase.google.com/go/v4 v4.14.1
 	github.com/firebase/genkit/go v0.1.1
 	github.com/rs/cors v1.11.1
 	github.com/stretchr/testify v1.9.0
+	github.com/stripe/stripe-go/v80 v80.2.0
 	github.com/tursodatabase/go-libsql v0.0.0-20241011135853-3effbb6dea5c
 	golang.org/x/oauth2 v0.23.0
 	golang.org/x/sync v0.8.0
@@ -23,7 +25,6 @@ require (
 	cloud.google.com/go/longrunning v0.6.1 // indirect
 	cloud.google.com/go/storage v1.43.0 // indirect
 	cloud.google.com/go/vertexai v0.12.1-0.20240711230438-265963bd5b91 // indirect
-	firebase.google.com/go/v4 v4.14.1 // indirect
 	github.com/MicahParks/keyfunc v1.9.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect

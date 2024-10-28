@@ -22,6 +22,7 @@ var (
 	OPENAI_EMBEDDINGS_API_KEY SecretID
 	LIBSQL_ENCRYPTION_KEY     SecretID
 	TURSO_AUTH_TOKEN          SecretID
+	STRIPE_SECRET_KEY         SecretID
 )
 
 func (s SecretID) String() string { return string(s) }
