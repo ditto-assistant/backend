@@ -487,6 +487,7 @@ func main() {
 			ID            int64
 			LastAirdropAt sql.NullTime
 		}
+		ctx := r.Context()
 		err = db.D.QueryRowContext(ctx, `
 			SELECT id, last_airdrop_at FROM users WHERE uid = ?
 		`, bod.UserID).Scan(&q1.ID, &q1.LastAirdropAt)
@@ -528,7 +529,6 @@ func main() {
 			Searches float64
 			Dollars  float64
 		}
-		ctx := r.Context()
 		err = db.D.QueryRowContext(ctx, `
 			SELECT users.balance,
 				   CAST(users.balance AS FLOAT) / (SELECT CAST(count AS FLOAT) FROM tokens_per_unit WHERE name = 'dollar'),
