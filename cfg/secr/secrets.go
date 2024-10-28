@@ -43,11 +43,11 @@ func (secPtr *SecretID) fetch(
 		sid := sb.String()
 		s, err := sm.Projects.Secrets.Versions.Access(sid).Context(ctx).Do()
 		if err != nil {
-			return fmt.Errorf("failed to get secret %s: %w", sid, err)
+			return fmt.Errorf("failed to get secret: %s: %w", sid, err)
 		}
 		decoded, err := base64.StdEncoding.DecodeString(s.Payload.Data)
 		if err != nil {
-			return fmt.Errorf("failed to decode secret %s: %w", sid, err)
+			return fmt.Errorf("failed to decode secret: %s: %w", sid, err)
 		}
 		*secPtr = SecretID(decoded)
 		slog.Debug("fetched secret", "id", sid)
@@ -70,13 +70,17 @@ func Setup(ctx context.Context) error {
 	LIBSQL_ENCRYPTION_KEY.fetch(ctx, group, sm, "LIBSQL_ENCRYPTION_KEY")
 	OPENAI_EMBEDDINGS_API_KEY.fetch(ctx, group, sm, "OPENAI_EMBEDDINGS_API_KEY")
 	switch envs.DITTO_ENV {
+	case envs.EnvLocal:
+		STRIPE_SECRET_KEY.fetch(ctx, group, sm, "LOCAL_STRIPE_SECRET_KEY")
 	case envs.EnvStaging:
+		STRIPE_SECRET_KEY.fetch(ctx, group, sm, "STAGING_STRIPE_SECRET_KEY")
 		TURSO_AUTH_TOKEN.fetch(ctx, group, sm, "STAGING_TURSO_AUTH_TOKEN")
 	case envs.EnvProd:
+		STRIPE_SECRET_KEY.fetch(ctx, group, sm, "PROD_STRIPE_SECRET_KEY")
 		TURSO_AUTH_TOKEN.fetch(ctx, group, sm, "PROD_TURSO_AUTH_TOKEN")
 	}
 	if err := group.Wait(); err != nil {
-		return fmt.Errorf("failed to fetch secrets: %w", err)
+		return err
 	}
 	return nil
 }

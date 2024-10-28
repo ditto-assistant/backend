@@ -57,6 +57,7 @@ func main() {
 	if err := db.Setup(bgCtx, &shutdownWG); err != nil {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
+	stripe.Setup()
 
 	fbAuth, err := fbase.NewAuth(bgCtx)
 	if err != nil {

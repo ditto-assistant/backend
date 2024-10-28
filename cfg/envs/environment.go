@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"embed"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -14,10 +15,15 @@ var fs embed.FS
 
 // Environment Variables
 var (
-	PROJECT_ID     string
-	DITTO_ENV      Env
-	DB_URL_DITTO   string
-	GCLOUD_PROJECT string
+	PROJECT_ID           string
+	DITTO_ENV            Env
+	DB_URL_DITTO         string
+	GCLOUD_PROJECT       string
+	PRICE_ID_TOKENS_1B   string
+	PRICE_ID_TOKENS_11B  string
+	PRICE_ID_TOKENS_30B  string
+	PRICE_ID_TOKENS_100B string
+	PRICE_ID_TOKENS_150B string
 )
 
 type Env string
@@ -84,20 +90,55 @@ func Load() error {
 		if err != nil {
 			return err
 		}
+
 	}
-	PROJECT_ID, ok = os.LookupEnv("PROJECT_ID")
-	if !ok {
-		return errors.New("env PROJECT_ID not set")
+	envs := []envLookup{
+		{&PROJECT_ID, "PROJECT_ID"},
+		{&DB_URL_DITTO, "DB_URL_DITTO"},
+		{&GCLOUD_PROJECT, "GCLOUD_PROJECT"},
+		{&PRICE_ID_TOKENS_1B, "PRICE_ID_TOKENS_1B"},
+		{&PRICE_ID_TOKENS_11B, "PRICE_ID_TOKENS_11B"},
+		{&PRICE_ID_TOKENS_30B, "PRICE_ID_TOKENS_30B"},
+		{&PRICE_ID_TOKENS_100B, "PRICE_ID_TOKENS_100B"},
+		{&PRICE_ID_TOKENS_150B, "PRICE_ID_TOKENS_150B"},
 	}
-	DB_URL_DITTO, ok = os.LookupEnv("DB_URL_DITTO")
-	if !ok {
-		return errors.New("env DB_URL_DITTO not set")
-	}
-	GCLOUD_PROJECT, ok = os.LookupEnv("GCLOUD_PROJECT")
-	if !ok {
-		return errors.New("env GCLOUD_PROJECT not set")
+	if err := lookupEnvs(envs); err != nil {
+		return err
 	}
 	didLoad = true
-	slog.Debug("Loaded environment variables", "PROJECT_ID", PROJECT_ID, "DITTO_ENV", DITTO_ENV, "DB_URL_DITTO", DB_URL_DITTO, "GCLOUD_PROJECT", GCLOUD_PROJECT)
+	slog.Debug("Loaded environment variables",
+		"PROJECT_ID", PROJECT_ID,
+		"DITTO_ENV", DITTO_ENV,
+		"DB_URL_DITTO", DB_URL_DITTO,
+		"GCLOUD_PROJECT", GCLOUD_PROJECT,
+	)
 	return nil
+}
+
+type envLookup struct {
+	ptr *string
+	key string
+}
+
+func lookupEnvs(envs []envLookup) error {
+	var errorSlice []error
+	for _, env := range envs {
+		val, err := lookupEnv(env.key)
+		if err != nil {
+			errorSlice = append(errorSlice, err)
+		}
+		*env.ptr = val
+	}
+	if len(errorSlice) > 0 {
+		return fmt.Errorf("failed to lookup envs: %w", errors.Join(errorSlice...))
+	}
+	return nil
+}
+
+func lookupEnv(key string) (string, error) {
+	val, ok := os.LookupEnv(key)
+	if !ok {
+		return "", fmt.Errorf("env %s not set", key)
+	}
+	return val, nil
 }
