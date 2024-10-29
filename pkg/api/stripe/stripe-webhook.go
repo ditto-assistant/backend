@@ -9,19 +9,30 @@ import (
 	"os"
 
 	"github.com/ditto-assistant/backend/cfg/secr"
+	"github.com/ditto-assistant/backend/pkg/db"
+	"github.com/ditto-assistant/backend/pkg/numfmt"
 	"github.com/stripe/stripe-go/v80"
 	"github.com/stripe/stripe-go/v80/webhook"
 )
 
-// func main() {
-//   // This is your test secret API key.
-//   stripe.Key = "sk_test_51Q73h5ICo0zHqarySfvYwr7hqfpm63rwy473KF7Vnr78o0bnLOt3Hh6FDetIC5UBlFvlk514hLUvFwRCikPR12io00LttPDapQ"
-
-//   http.HandleFunc("/webhook", handleWebhook)
-//   addr := "localhost:4242"
-//   log.Printf("Listening on %s", addr)
-//   log.Fatal(http.ListenAndServe(addr, nil))
-// }
+// calculateTokens determines the number of tokens based on payment amount in cents
+func calculateTokens(cents int64) int64 {
+	switch cents {
+	case 1000: // $10
+		return 11_000_000_000 // 11B tokens (10% bonus)
+	case 2500: // $25
+		return 30_000_000_000 // 30B tokens (20% bonus)
+	case 5000: // $50
+		return 65_000_000_000 // 65B tokens (30% bonus)
+	case 7500: // $75
+		return 100_000_000_000 // 100B tokens (33% bonus)
+	case 10000: // $100
+		return 150_000_000_000 // 150B tokens (50% bonus)
+	default:
+		// Default: $1 per 1B tokens
+		return (cents / 100) * 1_000_000_000
+	}
+}
 
 func HandleWebhook(w http.ResponseWriter, req *http.Request) {
 	const MaxBodyBytes = int64(65536)
@@ -33,8 +44,7 @@ func HandleWebhook(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	event := stripe.Event{}
-
+	var event stripe.Event
 	if err := json.Unmarshal(payload, &event); err != nil {
 		slog.Error("webhook error while parsing basic request", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -53,54 +63,7 @@ func HandleWebhook(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// Unmarshal the event data into an appropriate struct depending on its Type
 	switch event.Type {
-	case "checkout.session.async_payment_failed":
-		var session stripe.CheckoutSession
-		err := json.Unmarshal(event.Data.Raw, &session)
-		if err != nil {
-			slog.Error("error parsing webhook JSON", "error", err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		slog.Info("async payment failed",
-			"session_id", session.ID,
-			"customer", session.Customer.ID,
-			"payment_status", session.PaymentStatus)
-		// TODO: Handle failed payment - notify user, update order status, etc.
-
-	case "checkout.session.async_payment_succeeded":
-		var session stripe.CheckoutSession
-		err := json.Unmarshal(event.Data.Raw, &session)
-		if err != nil {
-			slog.Error("error parsing webhook JSON", "error", err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		slog.Info("async payment succeeded",
-			"session_id", session.ID,
-			"customer", session.Customer.ID,
-			"payment_status", session.PaymentStatus)
-		// TODO: Handle successful payment - fulfill order, update database, etc.
-
-	case "checkout.session.completed":
-		var session stripe.CheckoutSession
-		err := json.Unmarshal(event.Data.Raw, &session)
-		if err != nil {
-			slog.Error("error parsing webhook JSON", "error", err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		uid := session.Metadata["userID"]
-		invoice := session.Invoice
-		slog.Info("checkout session completed",
-			"session_id", session.ID,
-			// "customer", session.Customer.ID,
-			"payment_status", session.PaymentStatus,
-			"userID", uid,
-			"invoice", invoice)
-		// TODO: Handle completed session - confirm order completion, send confirmation email, etc.
-
 	case "payment_intent.succeeded":
 		var paymentIntent stripe.PaymentIntent
 		err := json.Unmarshal(event.Data.Raw, &paymentIntent)
@@ -111,21 +74,26 @@ func HandleWebhook(w http.ResponseWriter, req *http.Request) {
 		}
 		uid := paymentIntent.Metadata["userID"]
 		id := paymentIntent.ID
-		invoice := paymentIntent.Invoice
-		slog.Info("successful payment", "amount", paymentIntent.Amount, "userID", uid, "invoice", invoice, "id", id)
-		// Then define and call a func to handle the successful payment intent.
-		// handlePaymentIntentSucceeded(paymentIntent)
-
-	case "payment_method.attached":
-		var paymentMethod stripe.PaymentMethod
-		err := json.Unmarshal(event.Data.Raw, &paymentMethod)
+		tokens := calculateTokens(paymentIntent.Amount)
+		slog.Info("successful payment",
+			"amount", paymentIntent.Amount,
+			"userID", uid,
+			"payment_id", id,
+			"tokens", tokens,
+		)
+		p := db.Purchase{
+			PaymentID: id,
+			Cents:     paymentIntent.Amount,
+			Tokens:    tokens,
+		}
+		err = p.Insert(uid)
 		if err != nil {
-			slog.Error("error parsing webhook JSON", "error", err)
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			slog.Error("error inserting purchase", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		// Then define and call a func to handle the successful attachment of a PaymentMethod.
-		// handlePaymentMethodAttached(paymentMethod)
+		slog.Info("purchase inserted", "id", p.ID, "tokens", numfmt.LargeNumber(p.Tokens))
+
 	default:
 		slog.Debug("unhandled event type", "type", event.Type)
 	}
