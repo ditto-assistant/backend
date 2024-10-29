@@ -1,8 +1,6 @@
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 
 set dotenv-load
-run:
-	genkit start
 go:
 	go run main.go
 
