@@ -3,7 +3,7 @@ module github.com/ditto-assistant/backend
 go 1.23.2
 
 require (
-	firebase.google.com/go/v4 v4.14.1
+	firebase.google.com/go/v4 v4.15.0
 	github.com/firebase/genkit/go v0.1.1
 	github.com/rs/cors v1.11.1
 	github.com/stretchr/testify v1.9.0
