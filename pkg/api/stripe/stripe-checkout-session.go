@@ -109,6 +109,11 @@ func CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
 		SuccessURL:   bod.SuccessURL,
 		CancelURL:    bod.CancelURL,
 		AutomaticTax: &stripe.CheckoutSessionAutomaticTaxParams{Enabled: stripe.Bool(true)},
+		PaymentIntentData: &stripe.CheckoutSessionPaymentIntentDataParams{
+			Metadata: map[string]string{
+				"userID": bod.UserID,
+			},
+		},
 	}
 
 	s, err := session.New(params)

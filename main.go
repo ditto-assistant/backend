@@ -558,6 +558,7 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /v1/stripe/checkout-session", stripe.CreateCheckoutSession)
+	mux.HandleFunc("POST /v1/stripe/webhook", stripe.HandleWebhook)
 
 	handler := corsMiddleware.Handler(mux)
 	server := &http.Server{
