@@ -37,6 +37,7 @@ const (
 	ModeIngest
 	ModeFirestore
 	ModeSyncBalance
+	ModeSetBalance
 )
 
 func main() {
@@ -79,6 +80,7 @@ func main() {
 
 	// Parse subcommand flags
 	var version string
+	var userBalance int64
 	switch subcommand {
 	case "migrate":
 		mode = ModeMigrate
@@ -134,6 +136,23 @@ func main() {
 			log.Fatalf("unknown sync type: %s", globalFlags.Arg(1))
 		}
 
+	case "setbal":
+		mode = ModeSetBalance
+		setbalFlags := flag.NewFlagSet("setbal", flag.ExitOnError)
+		setbalFlags.Usage = func() {
+			fmt.Fprintf(os.Stderr, "usage: dbmgr [-env <environment>] setbal <uid> <balance>\n")
+		}
+		setbalFlags.Parse(globalFlags.Args()[1:])
+		if setbalFlags.NArg() != 2 {
+			setbalFlags.Usage()
+			os.Exit(1)
+		}
+		userID = setbalFlags.Arg(0)
+		userBalance, err = strconv.ParseInt(setbalFlags.Arg(1), 10, 64)
+		if err != nil {
+			log.Fatalf("invalid balance: %s", err)
+		}
+
 	default:
 		log.Fatalf("unknown command: %s", subcommand)
 	}
@@ -169,6 +188,10 @@ func main() {
 	case ModeSyncBalance:
 		if err := syncBalance(ctx); err != nil {
 			log.Fatalf("failed to sync balance: %s", err)
+		}
+	case ModeSetBalance:
+		if err := setBalance(ctx, userID, userBalance); err != nil {
+			log.Fatalf("failed to set balance: %s", err)
 		}
 	}
 }
@@ -671,4 +694,28 @@ func getLatestVersion(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("error getting latest version: %w", err)
 	}
 	return version, nil
+}
+
+func setBalance(ctx context.Context, uid string, balance int64) error {
+	slog.Info("setting user balance", "uid", uid, "balance", numfmt.LargeNumber(balance))
+
+	result, err := db.D.ExecContext(ctx,
+		"UPDATE users SET balance = ? WHERE uid = ?",
+		balance, uid)
+	if err != nil {
+		return fmt.Errorf("error updating balance: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("no user found with uid: %s", uid)
+	}
+
+	slog.Info("successfully set balance",
+		"uid", uid,
+		"new_balance", numfmt.LargeNumber(balance))
+	return nil
 }
