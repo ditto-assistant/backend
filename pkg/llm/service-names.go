@@ -22,6 +22,8 @@ const (
 	ModelDalle3 ServiceName = "dall-e-3"
 	// ModelMistralNemo is Mistral's nemo model.
 	ModelMistralNemo ServiceName = "mistral-nemo"
+	// ModelLlama32Vision is Meta's Llama 3.2 Vision model.
+	ModelLlama32Vision ServiceName = "llama-3.2-vision"
 )
 
 // Search Engines
