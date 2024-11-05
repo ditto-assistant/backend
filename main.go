@@ -25,14 +25,15 @@ import (
 	"github.com/ditto-assistant/backend/pkg/llm/claude"
 	"github.com/ditto-assistant/backend/pkg/llm/gemini"
 	"github.com/ditto-assistant/backend/pkg/llm/googai"
+	"github.com/ditto-assistant/backend/pkg/llm/llama"
 	"github.com/ditto-assistant/backend/pkg/llm/mistral"
 	"github.com/ditto-assistant/backend/pkg/llm/openai"
+	"github.com/ditto-assistant/backend/pkg/middleware"
 	"github.com/ditto-assistant/backend/pkg/numfmt"
 	"github.com/ditto-assistant/backend/pkg/search/brave"
 	"github.com/ditto-assistant/backend/types/rp"
 	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/firebase/genkit/go/plugins/vertexai"
-	"github.com/rs/cors"
 	"google.golang.org/api/customsearch/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
@@ -58,26 +59,14 @@ func main() {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
 	stripe.Setup()
-
 	fbAuth, err := fbase.NewAuth(bgCtx)
 	if err != nil {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
-
-	corsMiddleware := cors.New(cors.Options{
-		AllowedOrigins: []string{
-			"http://localhost:3000",
-			"http://localhost:4173",
-			"https://assistant.heyditto.ai",
-			"https://ditto-app-dev.web.app",
-			"https://ditto-app-dev-*.web.app",
-		},
-		AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowedHeaders: []string{"*"}, // Allow all headers
-		MaxAge:         86400,         // 24 hours
-	})
+	corsMiddleware := middleware.NewCors()
 	mux := http.NewServeMux()
 
+	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
 		tok, err := fbAuth.VerifyToken(r)
 		if err != nil {
@@ -142,6 +131,14 @@ func main() {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+		case llm.ModelLlama32:
+			m := llama.ModelLlama32
+			err = m.Prompt(ctx, bod, &rsp)
+			if err != nil {
+				slog.Error("failed to prompt "+m.PrettyStr(), "error", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		default:
 			slog.Info("unsupported model", "model", bod.Model)
 			http.Error(w, fmt.Sprintf("unsupported model: %s", bod.Model), http.StatusBadRequest)
@@ -173,6 +170,7 @@ func main() {
 		}()
 	})
 
+	// - MARK: embed
 	mux.HandleFunc("POST /v1/embed", func(w http.ResponseWriter, r *http.Request) {
 		tok, err := fbAuth.VerifyToken(r)
 		if err != nil {
@@ -239,6 +237,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to initialize custom search: %s", err)
 	}
+	// - MARK: google-search
 	mux.HandleFunc("POST /v1/google-search", func(w http.ResponseWriter, r *http.Request) {
 		tok, err := fbAuth.VerifyToken(r)
 		if err != nil {
@@ -331,6 +330,7 @@ func main() {
 		}()
 	})
 
+	// - MARK: generate-image
 	mux.HandleFunc("POST /v1/generate-image", func(w http.ResponseWriter, r *http.Request) {
 		tok, err := fbAuth.VerifyToken(r)
 		if err != nil {
@@ -433,6 +433,7 @@ func main() {
 		slog.Debug("generated image", "url", respBody.Data[0].URL)
 	})
 
+	// - MARK: search-examples
 	mux.HandleFunc("POST /v1/search-examples", func(w http.ResponseWriter, r *http.Request) {
 		tok, err := fbAuth.VerifyToken(r)
 		if err != nil {
@@ -467,6 +468,7 @@ func main() {
 
 	// Aidrop tokens every 24 hours when the user logs in
 	const airdropTokens = 20_000_000
+	// - MARK: balance
 	mux.HandleFunc("GET /v1/balance", func(w http.ResponseWriter, r *http.Request) {
 		tok, err := fbAuth.VerifyToken(r)
 		if err != nil {
@@ -557,6 +559,7 @@ func main() {
 		json.NewEncoder(w).Encode(rsp)
 	})
 
+	// - MARK: stripe
 	mux.HandleFunc("POST /v1/stripe/checkout-session", stripe.CreateCheckoutSession)
 	mux.HandleFunc("POST /v1/stripe/webhook", stripe.HandleWebhook)
 

@@ -2,7 +2,6 @@ package llm
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -57,12 +56,4 @@ func SendRequest(ctx context.Context, url string, body io.Reader) (*http.Respons
 	}
 
 	return resp, nil
-}
-
-func ParseJSONResponse(data []byte, v interface{}) error {
-	err := json.Unmarshal(data, v)
-	if err != nil {
-		return fmt.Errorf("error parsing JSON response: %w", err)
-	}
-	return nil
 }

@@ -17,12 +17,12 @@ import (
 type Model llm.ServiceName
 
 const (
-	ModelLlama32Vision = Model(llm.ModelLlama32Vision)
+	ModelLlama32 = Model(llm.ModelLlama32)
 )
 
 func (m Model) PrettyStr() string {
 	switch m {
-	case ModelLlama32Vision:
+	case ModelLlama32:
 		return "Llama 3.2 Vision"
 	default:
 		return "Unknown Llama Model"
