@@ -19,8 +19,8 @@ cloud.google.com/go/storage v1.43.0 h1:CcxnSohZwizt4LCzQHWvBf1/kvtHUn7gk9QERXPyX
 cloud.google.com/go/storage v1.43.0/go.mod h1:ajvxEa7WmZS1PxvKRq4bq0tFT3vMd502JwstCcYv0Q0=
 cloud.google.com/go/vertexai v0.12.1-0.20240711230438-265963bd5b91 h1:JwSkFKQ/yI97gCjMMnaEOZAigRpN53yiH6gJzik/OYA=
 cloud.google.com/go/vertexai v0.12.1-0.20240711230438-265963bd5b91/go.mod h1:KrfEQtFq2gqyHt4kZ+k1kIo5oy9Jw90yEHxgPsyl1bw=
-firebase.google.com/go/v4 v4.14.1 h1:4qiUETaFRWoFGE1XP5VbcEdtPX93Qs+8B/7KvP2825g=
-firebase.google.com/go/v4 v4.14.1/go.mod h1:fgk2XshgNDEKaioKco+AouiegSI9oTWVqRaBdTTGBoM=
+firebase.google.com/go/v4 v4.15.0 h1:k27M+cHbyN1YpBI2Cf4NSjeHnnYRB9ldXwpqA5KikN0=
+firebase.google.com/go/v4 v4.15.0/go.mod h1:S/4MJqVZn1robtXkHhpRUbwOC4gdYtgsiMMJQ4x+xmQ=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/MicahParks/keyfunc v1.9.0 h1:lhKd5xrFHLNOWrDc4Tyb/Q1AJ4LCzQ48GVJyVIID3+o=
 github.com/MicahParks/keyfunc v1.9.0/go.mod h1:IdnCilugA0O/99dW+/MkvlyrsX8+L8+x95xuVNtM5jw=
