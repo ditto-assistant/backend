@@ -23,6 +23,7 @@ type PromptV1 struct {
 	SystemPrompt string          `json:"systemPrompt"`
 	Model        llm.ServiceName `json:"model,omitempty"`
 	ImageURL     string          `json:"imageURL,omitempty"`
+	Images       []string        `json:"images,omitempty"`
 }
 
 func (p PromptV1) GetUserID() string { return p.UserID }

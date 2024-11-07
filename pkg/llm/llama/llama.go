@@ -90,6 +90,22 @@ func init() {
 }
 
 func (m Model) Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) error {
+	messages := make([]Message, 0, 2)
+	if prompt.SystemPrompt != "" {
+		// Llama 3.2 does not support system prompts if there is an image.
+		if prompt.ImageURL == "" {
+			messages = append(messages, Message{
+				Role: "system",
+				Content: []Content{{
+					Type: "text",
+					Text: prompt.SystemPrompt,
+				}},
+			})
+		} else {
+			prompt.UserPrompt = prompt.SystemPrompt + "\n\n" + prompt.UserPrompt
+		}
+	}
+
 	contents := []Content{{
 		Type: "text",
 		Text: prompt.UserPrompt,
@@ -118,21 +134,10 @@ func (m Model) Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamRe
 		}}, contents...)
 	}
 
-	messages := []Message{{
+	messages = append(messages, Message{
 		Role:    "user",
 		Content: contents,
-	}}
-
-	if prompt.SystemPrompt != "" {
-		messages = append([]Message{{
-			Role: "system",
-			Content: []Content{{
-				Type: "text",
-				Text: prompt.SystemPrompt,
-			}},
-		}}, messages...)
-	}
-
+	})
 	req := Request{
 		Model:       "meta/llama-3.2-90b-vision-instruct-maas",
 		Messages:    messages,
