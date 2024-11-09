@@ -123,11 +123,10 @@ func main() {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-		case llm.ModelMistralNemo:
-			m := mistral.ModelMistralNemo
-			err = m.Prompt(ctx, bod, &rsp)
+		case llm.ModelMistralNemo, llm.ModelMistralLarge:
+			err = mistral.Prompt(ctx, bod, &rsp)
 			if err != nil {
-				slog.Error("failed to prompt "+m.PrettyStr(), "error", err)
+				slog.Error("failed to prompt "+bod.Model.String(), "error", err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
