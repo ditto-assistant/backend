@@ -9,7 +9,7 @@ require (
 	github.com/stretchr/testify v1.9.0
 	github.com/stripe/stripe-go/v80 v80.2.1
 	github.com/tursodatabase/go-libsql v0.0.0-20241011135853-3effbb6dea5c
-	golang.org/x/oauth2 v0.23.0
+	golang.org/x/oauth2 v0.24.0
 	golang.org/x/sync v0.8.0
 	google.golang.org/api v0.205.0
 )
