@@ -14,33 +14,37 @@ import (
 func TestPrompt(t *testing.T) {
 	ctx := context.Background()
 	prompt := "Please respond with a random single token of text."
+	models := []llm.ServiceName{llm.ModelMistralNemo, llm.ModelMistralLarge}
+	for _, model := range models {
+		t.Run(string(model), func(t *testing.T) {
+			var rsp llm.StreamResponse
+			err := mistral.Prompt(ctx, rq.PromptV1{
+				Model:      model,
+				UserPrompt: prompt,
+			}, &rsp)
+			if err != nil {
+				t.Fatalf("Error calling Prompt: %v", err)
+			}
 
-	var rsp llm.StreamResponse
-	m := mistral.ModelMistralNemo
-	err := m.Prompt(ctx, rq.PromptV1{
-		UserPrompt: prompt,
-	}, &rsp)
-	if err != nil {
-		t.Fatalf("Error calling Prompt: %v", err)
-	}
+			fmt.Printf("%s's response:\n", model)
+			for token := range rsp.Text {
+				if token.Err != nil {
+					t.Fatalf("Error in response: %v", token.Err)
+				}
+				fmt.Print(token.Ok)
+				os.Stdout.Sync() // Ensure output is flushed immediately
+			}
+			fmt.Println() // Add a newline at the end
 
-	fmt.Println("Mistral's response:")
-	for token := range rsp.Text {
-		if token.Err != nil {
-			t.Fatalf("Error in response: %v", token.Err)
-		}
-		fmt.Print(token.Ok)
-		os.Stdout.Sync() // Ensure output is flushed immediately
+			if rsp.InputTokens == 0 {
+				t.Fatalf("InputTokens is 0")
+			}
+			if rsp.OutputTokens == 0 {
+				t.Fatalf("OutputTokens is 0")
+			}
+			t.Logf("InputTokens: %d, OutputTokens: %d", rsp.InputTokens, rsp.OutputTokens)
+		})
 	}
-	fmt.Println() // Add a newline at the end
-
-	if rsp.InputTokens == 0 {
-		t.Fatalf("InputTokens is 0")
-	}
-	if rsp.OutputTokens == 0 {
-		t.Fatalf("OutputTokens is 0")
-	}
-	t.Logf("InputTokens: %d, OutputTokens: %d", rsp.InputTokens, rsp.OutputTokens)
 }
 
 func TestLongPrompt(t *testing.T) {
@@ -51,8 +55,8 @@ func TestLongPrompt(t *testing.T) {
 	prompt := "Tell a story about a cat named Hat."
 
 	var rsp llm.StreamResponse
-	m := mistral.ModelMistralNemo
-	err := m.Prompt(ctx, rq.PromptV1{
+	err := mistral.Prompt(ctx, rq.PromptV1{
+		Model:      llm.ModelMistralNemo,
 		UserPrompt: prompt,
 	}, &rsp)
 	if err != nil {
@@ -83,8 +87,8 @@ func TestSystemInstruction(t *testing.T) {
 	userPrompt := "Make up a name"
 
 	var rsp llm.StreamResponse
-	m := mistral.ModelMistralNemo
-	err := m.Prompt(ctx, rq.PromptV1{
+	err := mistral.Prompt(ctx, rq.PromptV1{
+		Model:        llm.ModelMistralNemo,
 		SystemPrompt: systemPrompt,
 		UserPrompt:   userPrompt,
 	}, &rsp)

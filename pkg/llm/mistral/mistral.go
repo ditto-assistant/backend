@@ -19,7 +19,8 @@ import (
 type Model llm.ServiceName
 
 const (
-	ModelMistralNemo = Model(llm.ModelMistralNemo)
+	ModelMistralNemo  = Model(llm.ModelMistralNemo)
+	ModelMistralLarge = Model(llm.ModelMistralLarge)
 )
 
 func (m Model) PrettyStr() string {
@@ -77,8 +78,8 @@ func init() {
 	}
 }
 
-func (m Model) Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) error {
-	requestURL = fmt.Sprintf(baseURL, region, envs.GCLOUD_PROJECT, region, m, Version)
+func Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) error {
+	requestURL = fmt.Sprintf(baseURL, region, envs.GCLOUD_PROJECT, region, prompt.Model, Version)
 	messages := make([]Message, 0, 2)
 	if prompt.SystemPrompt != "" {
 		messages = append([]Message{{Role: "system", Content: prompt.SystemPrompt}}, messages...)
@@ -90,7 +91,7 @@ func (m Model) Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamRe
 	}
 
 	req := Request{
-		Model:       string(m),
+		Model:       string(prompt.Model),
 		Messages:    messages,
 		Temperature: 0.7,
 		Stream:      true,
