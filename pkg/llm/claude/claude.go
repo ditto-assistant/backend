@@ -18,9 +18,7 @@ import (
 )
 
 const baseURL = "https://us-east5-aiplatform.googleapis.com/v1/projects/%s/locations/us-east5/publishers/anthropic/models/%s:streamRawPredict"
-const Model = llm.ModelClaude35Sonnet
-const Version = "20240620"
-const TaggedModel = llm.ModelClaude35Sonnet + "@" + Version
+const ModelClaude35Sonnet20240620 = llm.ModelClaude35Sonnet + "@20240620"
 
 var requestUrl string
 
@@ -69,7 +67,7 @@ func init() {
 	if err != nil {
 		log.Fatalf("Error loading environment variables: %v", err)
 	}
-	requestUrl = fmt.Sprintf(baseURL, envs.GCLOUD_PROJECT, TaggedModel)
+	requestUrl = fmt.Sprintf(baseURL, envs.GCLOUD_PROJECT, ModelClaude35Sonnet20240620)
 }
 
 type EvMsgStart struct {
@@ -100,15 +98,19 @@ type EvMsgDelta struct {
 
 // TODO: Add Prompt options, such as message array, last message role is assistant, etc.
 
-func Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) error {
+func Prompt(ctx context.Context, bod rq.PromptV1, rsp *llm.StreamResponse) error {
+	if bod.Model == llm.ModelClaude35Sonnet {
+		bod.Model = ModelClaude35Sonnet20240620
+	}
+	requestUrl = fmt.Sprintf(baseURL, envs.GCLOUD_PROJECT, bod.Model)
 	messages := make([]Message, 0, 1)
 	userContentCount := 1
-	if prompt.ImageURL != "" {
+	if bod.ImageURL != "" {
 		userContentCount++
 	}
 	userMessage := Message{Role: "user", Content: make([]Content, 0, userContentCount)}
-	if prompt.ImageURL != "" {
-		imageData, err := img.GetImageData(ctx, prompt.ImageURL)
+	if bod.ImageURL != "" {
+		imageData, err := img.GetImageData(ctx, bod.ImageURL)
 		if err != nil {
 			return fmt.Errorf("error getting image data: %w", err)
 		}
@@ -123,7 +125,7 @@ func Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) er
 	}
 	userMessage.Content = append(userMessage.Content, Content{
 		Type: "text",
-		Text: prompt.UserPrompt,
+		Text: bod.UserPrompt,
 	})
 	messages = append(messages, userMessage)
 	req := Request{
@@ -131,7 +133,7 @@ func Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) er
 		MaxTokens:        8192,
 		Stream:           true,
 		AnthropicVersion: "vertex-2023-10-16",
-		System:           prompt.SystemPrompt,
+		System:           bod.SystemPrompt,
 	}
 	var buf bytes.Buffer
 	err := json.NewEncoder(&buf).Encode(req)

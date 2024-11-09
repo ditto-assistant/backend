@@ -16,6 +16,8 @@ const (
 	ModelGemini15Flash ServiceName = "gemini-1.5-flash"
 	// ModelGemini15Pro is Google's Gemini 1.5 Pro model.
 	ModelGemini15Pro ServiceName = "gemini-1.5-pro"
+	// ModelClaude3Haiku is Anthropic's Claude 3 Haiku model.
+	ModelClaude3Haiku ServiceName = "claude-3-haiku@20240307"
 	// ModelClaude35Sonnet is Anthropic's Claude 3.5 Sonnet model.
 	ModelClaude35Sonnet ServiceName = "claude-3-5-sonnet"
 	// ModelDalle3 is OpenAI's DALL-E 3 model.
