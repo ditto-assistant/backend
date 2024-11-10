@@ -344,6 +344,44 @@ func main() {
 		}()
 	})
 
+	// - MARK: sign-url
+	mux.HandleFunc("POST /v1/sign-url", func(w http.ResponseWriter, r *http.Request) {
+		tok, err := fbAuth.VerifyToken(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var bod rq.PresignedURLV1
+		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		err = tok.Check(bod)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		urlParts := strings.Split(bod.URL, "?")
+		if len(urlParts) == 0 {
+			slog.Error("failed to get filename from URL", "url", bod.URL)
+			http.Error(w, "failed to get filename from URL", http.StatusInternalServerError)
+			return
+		}
+		filename := strings.TrimPrefix(urlParts[0], envs.DITO_CONTENT_PREFIX)
+		key := fmt.Sprintf("%s/%s", bod.UserID, filename)
+		objReq, _ := s3Client.GetObjectRequest(&s3.GetObjectInput{
+			Bucket: bucket,
+			Key:    aws.String(key),
+		})
+		url, err := objReq.Presign(24 * time.Hour)
+		if err != nil {
+			slog.Error("failed to generate presigned URL", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintln(w, url)
+	})
+
 	// - MARK: generate-image
 	mux.HandleFunc("POST /v1/generate-image", func(w http.ResponseWriter, r *http.Request) {
 		tok, err := fbAuth.VerifyToken(r)
@@ -456,7 +494,7 @@ func main() {
 			return
 		}
 		filename := strings.TrimPrefix(urlParts[0], envs.DALL_E_PREFIX)
-		key := fmt.Sprintf("%s/%s", bod.UserID, filename)
+		key := fmt.Sprintf("%s/generated-images/%s", bod.UserID, filename)
 		put, err := s3Client.PutObject(&s3.PutObjectInput{
 			Bucket: bucket,
 			Key:    aws.String(key),
