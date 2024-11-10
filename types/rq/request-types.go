@@ -48,6 +48,7 @@ type GenerateImageV1 struct {
 	UserID string          `json:"userID"`
 	Prompt string          `json:"prompt"`
 	Model  llm.ServiceName `json:"model"`
+	Size   string          `json:"size"`
 }
 
 func (g GenerateImageV1) GetUserID() string { return g.UserID }

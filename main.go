@@ -13,10 +13,16 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/api/stripe"
 	"github.com/ditto-assistant/backend/pkg/db"
@@ -45,7 +51,6 @@ func main() {
 	var shutdownWG sync.WaitGroup
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGINT)
-
 	if err := vertexai.Init(bgCtx, &vertexai.Config{
 		ProjectID: "ditto-app-dev",
 		Location:  "us-central1",
@@ -63,8 +68,18 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
-	corsMiddleware := middleware.NewCors()
 	mux := http.NewServeMux()
+	bucket := aws.String(envs.DITO_CONTENT_BUCKET)
+	s3Config := &aws.Config{
+		Credentials: credentials.NewStaticCredentials(envs.BACKBLAZE_KEY_ID, secr.BACKBLAZE_API_KEY.String(), ""),
+		Region:      aws.String(envs.DITO_CONTENT_REGION),
+		Endpoint:    aws.String(envs.DITO_CONTENT_ENDPOINT),
+	}
+	mySession, err := session.NewSession(s3Config)
+	if err != nil {
+		log.Fatalf("failed to create session: %v", err)
+	}
+	s3Client := s3.New(mySession)
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
@@ -87,7 +102,7 @@ func main() {
 		slog.Debug("Prompt Request")
 		user := db.User{UID: bod.UserID}
 		ctx := r.Context()
-		if err := user.GetByUID(ctx); err != nil {
+		if err := user.Get(ctx); err != nil {
 			slog.Error("failed to get user", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -189,7 +204,7 @@ func main() {
 		}
 		user := db.User{UID: bod.UserID}
 		ctx := r.Context()
-		if err := user.GetByUID(ctx); err != nil {
+		if err := user.Get(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -262,7 +277,7 @@ func main() {
 		}
 		user := db.User{UID: bod.UserID}
 		ctx := r.Context()
-		if err := user.GetByUID(ctx); err != nil {
+		if err := user.Get(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -351,13 +366,16 @@ func main() {
 		}
 		user := db.User{UID: bod.UserID}
 		ctx := r.Context()
-		if err := user.GetByUID(ctx); err != nil {
+		if err := user.Get(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if user.Balance <= 0 {
 			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 			return
+		}
+		if bod.Size == "" {
+			bod.Size = "1024x1024"
 		}
 
 		type RequestImageOpenAI struct {
@@ -371,7 +389,7 @@ func main() {
 			Prompt: bod.Prompt,
 			Model:  bod.Model,
 			N:      1,
-			Size:   "1024x1024",
+			Size:   bod.Size,
 		}); err != nil {
 			slog.Error("failed to encode image request", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -413,7 +431,55 @@ func main() {
 			http.Error(w, "no image URL returned", http.StatusInternalServerError)
 			return
 		}
-		fmt.Fprintln(w, respBody.Data[0].URL)
+
+		// Extract filename from URL
+		url := respBody.Data[0].URL
+		imgResp, err := http.Get(url)
+		if err != nil {
+			slog.Error("failed to download image", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer imgResp.Body.Close()
+		// Download image from URL and read into memory
+		imgData, err := io.ReadAll(imgResp.Body)
+		if err != nil {
+			slog.Error("failed to read image data", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		// Upload to S3 using bytes.Reader which implements io.ReadSeeker
+		urlParts := strings.Split(respBody.Data[0].URL, "?")
+		if len(urlParts) == 0 {
+			slog.Error("failed to get filename from URL", "url", respBody.Data[0].URL)
+			http.Error(w, "failed to get filename from URL", http.StatusInternalServerError)
+			return
+		}
+		filename := strings.TrimPrefix(urlParts[0], envs.DALL_E_PREFIX)
+		key := fmt.Sprintf("%s/%s", bod.UserID, filename)
+		put, err := s3Client.PutObject(&s3.PutObjectInput{
+			Bucket: bucket,
+			Key:    aws.String(key),
+			Body:   bytes.NewReader(imgData),
+		})
+		if err != nil {
+			slog.Error("failed to copy to S3", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		slog.Debug("uploaded image to S3", "key", put.String())
+		objReq, _ := s3Client.GetObjectRequest(&s3.GetObjectInput{
+			Bucket: bucket,
+			Key:    aws.String(key),
+		})
+		// Allow 6 days for download until we reimplement history
+		imgURL, err := objReq.Presign(6 * 24 * time.Hour)
+		if err != nil {
+			slog.Error("failed to generate presigned URL", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintln(w, imgURL)
 
 		shutdownWG.Add(1)
 		go func() {
@@ -562,6 +628,7 @@ func main() {
 	mux.HandleFunc("POST /v1/stripe/checkout-session", stripe.CreateCheckoutSession)
 	mux.HandleFunc("POST /v1/stripe/webhook", stripe.HandleWebhook)
 
+	corsMiddleware := middleware.NewCors()
 	handler := corsMiddleware.Handler(mux)
 	server := &http.Server{
 		Addr:    ":3400",

@@ -35,9 +35,9 @@ func (u *User) Insert(ctx context.Context) error {
 	return nil
 }
 
-// GetByUID gets a user by their UID.
+// Get gets a user by their UID.
 // If the user does not exist, it creates a new user.
-func (u *User) GetByUID(ctx context.Context) error {
+func (u *User) Get(ctx context.Context) error {
 	err := D.QueryRowContext(ctx,
 		"SELECT id, balance FROM users WHERE uid = ?", u.UID).
 		Scan(&u.ID, &u.Balance)
