@@ -16,6 +16,7 @@ type SecretID string
 
 // Secrets
 var (
+	BACKBLAZE_API_KEY         SecretID
 	BRAVE_SEARCH_API_KEY      SecretID
 	SEARCH_API_KEY            SecretID
 	OPENAI_DALLE_API_KEY      SecretID
@@ -65,6 +66,7 @@ func Setup(ctx context.Context) error {
 		return fmt.Errorf("failed to load environment variables: %w", err)
 	}
 	group, ctx := errgroup.WithContext(ctx)
+	BACKBLAZE_API_KEY.fetch(ctx, group, sm, "BACKBLAZE_API_KEY")
 	BRAVE_SEARCH_API_KEY.fetch(ctx, group, sm, "BRAVE_SEARCH_API_KEY")
 	SEARCH_API_KEY.fetch(ctx, group, sm, "SEARCH_API_KEY")
 	OPENAI_DALLE_API_KEY.fetch(ctx, group, sm, "OPENAI_DALLE_API_KEY")
