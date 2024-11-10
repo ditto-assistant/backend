@@ -494,7 +494,7 @@ func main() {
 			return
 		}
 		filename := strings.TrimPrefix(urlParts[0], envs.DALL_E_PREFIX)
-		key := fmt.Sprintf("%s/%s", bod.UserID, filename)
+		key := fmt.Sprintf("%s/generated-images/%s", bod.UserID, filename)
 		put, err := s3Client.PutObject(&s3.PutObjectInput{
 			Bucket: bucket,
 			Key:    aws.String(key),
