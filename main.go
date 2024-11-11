@@ -64,7 +64,7 @@ func main() {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
 	stripe.Setup()
-	fbAuth, err := fbase.NewAuth(bgCtx)
+	auth, err := fbase.NewAuth(bgCtx)
 	if err != nil {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
@@ -83,7 +83,7 @@ func main() {
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := fbAuth.VerifyToken(r)
+		tok, err := auth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -186,7 +186,7 @@ func main() {
 
 	// - MARK: embed
 	mux.HandleFunc("POST /v1/embed", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := fbAuth.VerifyToken(r)
+		tok, err := auth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -253,7 +253,7 @@ func main() {
 	}
 	// - MARK: google-search
 	mux.HandleFunc("POST /v1/google-search", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := fbAuth.VerifyToken(r)
+		tok, err := auth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -344,9 +344,9 @@ func main() {
 		}()
 	})
 
-	// - MARK: sign-url
-	mux.HandleFunc("POST /v1/sign-url", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := fbAuth.VerifyToken(r)
+	// - MARK: presign-url
+	mux.HandleFunc("POST /v1/presign-url", func(w http.ResponseWriter, r *http.Request) {
+		tok, err := auth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -367,7 +367,9 @@ func main() {
 			http.Error(w, "failed to get filename from URL", http.StatusInternalServerError)
 			return
 		}
+		// Trim both prefixes
 		filename := strings.TrimPrefix(urlParts[0], envs.DITO_CONTENT_PREFIX)
+		filename = strings.TrimPrefix(filename, envs.DALL_E_PREFIX)
 		key := fmt.Sprintf("%s/%s", bod.UserID, filename)
 		objReq, _ := s3Client.GetObjectRequest(&s3.GetObjectInput{
 			Bucket: bucket,
@@ -382,9 +384,41 @@ func main() {
 		fmt.Fprintln(w, url)
 	})
 
+	// - MARK: create-upload-url
+	mux.HandleFunc("POST /v1/create-upload-url", func(w http.ResponseWriter, r *http.Request) {
+		tok, err := auth.VerifyToken(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var bod rq.CreateUploadURLV1
+		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		err = tok.Check(bod)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		key := fmt.Sprintf("%s/uploads/%d", bod.UserID, time.Now().UnixNano())
+		req, _ := s3Client.PutObjectRequest(&s3.PutObjectInput{
+			Bucket: bucket,
+			Key:    aws.String(key),
+		})
+		url, err := req.Presign(15 * time.Minute)
+		slog.Debug("created upload URL", "url", url)
+		if err != nil {
+			slog.Error("failed to generate upload URL", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintln(w, url)
+	})
+
 	// - MARK: generate-image
 	mux.HandleFunc("POST /v1/generate-image", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := fbAuth.VerifyToken(r)
+		tok, err := auth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -415,7 +449,6 @@ func main() {
 		if bod.Size == "" {
 			bod.Size = "1024x1024"
 		}
-
 		type RequestImageOpenAI struct {
 			Prompt string          `json:"prompt"`
 			Model  llm.ServiceName `json:"model"`
@@ -439,7 +472,6 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", "Bearer "+secr.OPENAI_DALLE_API_KEY.String())
 		resp, err := llm.HttpClient.Do(req)
@@ -454,76 +486,63 @@ func main() {
 			http.Error(w, fmt.Sprintf("failed to generate image: %s", resp.Status), resp.StatusCode)
 			return
 		}
-		var respBody struct {
+		var dalleRsp struct {
 			Data []struct {
 				URL string `json:"url"`
 			} `json:"data"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+		if err := json.NewDecoder(resp.Body).Decode(&dalleRsp); err != nil {
 			slog.Error("failed to decode image response", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if len(respBody.Data) == 0 {
+		if len(dalleRsp.Data) == 0 {
 			slog.Error("no image URL returned")
 			http.Error(w, "no image URL returned", http.StatusInternalServerError)
 			return
 		}
-
-		// Extract filename from URL
-		url := respBody.Data[0].URL
-		imgResp, err := http.Get(url)
-		if err != nil {
-			slog.Error("failed to download image", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		defer imgResp.Body.Close()
-		// Download image from URL and read into memory
-		imgData, err := io.ReadAll(imgResp.Body)
-		if err != nil {
-			slog.Error("failed to read image data", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		// Upload to S3 using bytes.Reader which implements io.ReadSeeker
-		urlParts := strings.Split(respBody.Data[0].URL, "?")
-		if len(urlParts) == 0 {
-			slog.Error("failed to get filename from URL", "url", respBody.Data[0].URL)
-			http.Error(w, "failed to get filename from URL", http.StatusInternalServerError)
-			return
-		}
-		filename := strings.TrimPrefix(urlParts[0], envs.DALL_E_PREFIX)
-		key := fmt.Sprintf("%s/generated-images/%s", bod.UserID, filename)
-		put, err := s3Client.PutObject(&s3.PutObjectInput{
-			Bucket: bucket,
-			Key:    aws.String(key),
-			Body:   bytes.NewReader(imgData),
-		})
-		if err != nil {
-			slog.Error("failed to copy to S3", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		slog.Debug("uploaded image to S3", "key", put.String())
-		objReq, _ := s3Client.GetObjectRequest(&s3.GetObjectInput{
-			Bucket: bucket,
-			Key:    aws.String(key),
-		})
-		// Allow 6 days for download until we reimplement history
-		imgURL, err := objReq.Presign(6 * 24 * time.Hour)
-		if err != nil {
-			slog.Error("failed to generate presigned URL", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		fmt.Fprintln(w, imgURL)
+		url := dalleRsp.Data[0].URL
+		fmt.Fprintln(w, url)
 
 		shutdownWG.Add(1)
 		go func() {
 			defer shutdownWG.Done()
 			ctx, cancel := context.WithTimeout(bgCtx, 15*time.Second)
 			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+			if err != nil {
+				slog.Error("failed to create image request", "error", err)
+				return
+			}
+			imgResp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				slog.Error("failed to download image", "error", err)
+				return
+			}
+			defer imgResp.Body.Close()
+			imgData, err := io.ReadAll(imgResp.Body)
+			if err != nil {
+				slog.Error("failed to read image data", "error", err)
+				return
+			}
+			urlParts := strings.Split(url, "?")
+			if len(urlParts) == 0 {
+				slog.Error("failed to get filename from URL", "url", url)
+				return
+			}
+			filename := strings.TrimPrefix(urlParts[0], envs.DALL_E_PREFIX)
+			key := fmt.Sprintf("%s/generated-images/%s", bod.UserID, filename)
+			put, err := s3Client.PutObject(&s3.PutObjectInput{
+				Bucket: bucket,
+				Key:    aws.String(key),
+				Body:   bytes.NewReader(imgData),
+			})
+			if err != nil {
+				slog.Error("failed to copy to S3", "error", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			slog.Debug("uploaded image to S3", "key", put.String())
 			receipt := db.Receipt{
 				UserID:      user.ID,
 				NumImages:   1,
@@ -533,12 +552,12 @@ func main() {
 				slog.Error("failed to insert receipt", "error", err)
 			}
 		}()
-		slog.Debug("generated image", "url", respBody.Data[0].URL)
+		slog.Debug("generated image", "url", dalleRsp.Data[0].URL)
 	})
 
 	// - MARK: search-examples
 	mux.HandleFunc("POST /v1/search-examples", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := fbAuth.VerifyToken(r)
+		tok, err := auth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -573,7 +592,7 @@ func main() {
 	const airdropTokens = 20_000_000
 	// - MARK: balance
 	mux.HandleFunc("GET /v1/balance", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := fbAuth.VerifyToken(r)
+		tok, err := auth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
