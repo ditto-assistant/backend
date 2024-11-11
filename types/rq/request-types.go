@@ -82,3 +82,9 @@ type PresignedURLV1 struct {
 }
 
 func (p PresignedURLV1) GetUserID() string { return p.UserID }
+
+type CreateUploadURLV1 struct {
+	UserID string `json:"userID"`
+}
+
+func (c CreateUploadURLV1) GetUserID() string { return c.UserID }
