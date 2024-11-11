@@ -69,11 +69,11 @@ func main() {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
 	mux := http.NewServeMux()
-	bucket := aws.String(envs.DITO_CONTENT_BUCKET)
+	bucket := aws.String(envs.DITTO_CONTENT_BUCKET)
 	s3Config := &aws.Config{
 		Credentials: credentials.NewStaticCredentials(envs.BACKBLAZE_KEY_ID, secr.BACKBLAZE_API_KEY.String(), ""),
-		Region:      aws.String(envs.DITO_CONTENT_REGION),
-		Endpoint:    aws.String(envs.DITO_CONTENT_ENDPOINT),
+		Region:      aws.String(envs.DITTO_CONTENT_REGION),
+		Endpoint:    aws.String(envs.DITTO_CONTENT_ENDPOINT),
 	}
 	mySession, err := session.NewSession(s3Config)
 	if err != nil {
@@ -367,10 +367,15 @@ func main() {
 			http.Error(w, "failed to get filename from URL", http.StatusInternalServerError)
 			return
 		}
-		// Trim both prefixes
-		filename := strings.TrimPrefix(urlParts[0], envs.DITO_CONTENT_PREFIX)
+		if bod.Folder == "" {
+			bod.Folder = "generated-images"
+		}
+		// Clean filename
+		filename := strings.TrimPrefix(urlParts[0], envs.DITTO_CONTENT_PREFIX)
 		filename = strings.TrimPrefix(filename, envs.DALL_E_PREFIX)
-		key := fmt.Sprintf("%s/%s", bod.UserID, filename)
+		filename = strings.TrimPrefix(filename, bod.UserID+"/")
+		filename = strings.TrimPrefix(filename, bod.Folder+"/")
+		key := fmt.Sprintf("%s/%s/%s", bod.UserID, bod.Folder, filename)
 		objReq, _ := s3Client.GetObjectRequest(&s3.GetObjectInput{
 			Bucket: bucket,
 			Key:    aws.String(key),

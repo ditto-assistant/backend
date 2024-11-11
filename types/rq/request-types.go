@@ -79,6 +79,7 @@ func (b *BalanceV1) FromQuery(r *http.Request) error {
 type PresignedURLV1 struct {
 	UserID string `json:"userID"`
 	URL    string `json:"url"`
+	Folder string `json:"folder"`
 }
 
 func (p PresignedURLV1) GetUserID() string { return p.UserID }
