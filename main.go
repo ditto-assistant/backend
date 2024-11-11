@@ -438,7 +438,9 @@ func main() {
 		}
 		user := db.User{UID: bod.UserID}
 		ctx := r.Context()
+		slog := slog.With("user_id", bod.UserID, "model", bod.Model)
 		if err := user.Get(ctx); err != nil {
+			slog.Error("failed to get user", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -503,6 +505,7 @@ func main() {
 		}
 		url := dalleRsp.Data[0].URL
 		fmt.Fprintln(w, url)
+		slog.Debug("generated image", "url", url)
 
 		shutdownWG.Add(1)
 		go func() {
