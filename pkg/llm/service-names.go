@@ -26,6 +26,14 @@ const (
 	ModelMistralLarge ServiceName = "mistral-large"
 	// ModelLlama32 is Meta's Llama 3.2 model.
 	ModelLlama32 ServiceName = "llama-3-2"
+	// ModelFlux11ProUltra is BFL's FLUX 1.1 Pro Ultra model
+	ModelFlux11ProUltra ServiceName = "flux-1-1-pro-ultra"
+	// ModelFlux11Pro is BFL's FLUX 1.1 Pro model
+	ModelFlux11Pro ServiceName = "flux-1-1-pro"
+	// ModelFlux1Pro is BFL's FLUX.1 Pro model
+	ModelFlux1Pro ServiceName = "flux-1-pro"
+	// ModelFlux1Dev is BFL's FLUX.1 Dev model
+	ModelFlux1Dev ServiceName = "flux-1-dev"
 )
 
 // Search Engines

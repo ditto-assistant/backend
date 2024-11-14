@@ -67,9 +67,8 @@ func main() {
 	globalFlags := flag.NewFlagSet("global", flag.ExitOnError)
 	envFlag := globalFlags.String("env", envs.EnvLocal.String(), "ditto environment")
 	globalFlags.Parse(os.Args[1:])
-	dittoEnv = envs.Env(*envFlag)
-	envs.DITTO_ENV = dittoEnv
-	err := dittoEnv.EnvFile().Load()
+	os.Setenv("DITTO_ENV", *envFlag)
+	err := envs.Load()
 	if err != nil {
 		log.Fatalf("error loading environment file: %s", err)
 	}
