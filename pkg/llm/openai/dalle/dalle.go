@@ -78,15 +78,23 @@ type ReqDalle struct {
 // Prompt sends an image generation request to DALL-E
 func (c *Client) Prompt(ctx context.Context, r *rq.GenerateImageV1) (string, error) {
 	req := ReqDalle{
-		Prompt:  r.Prompt,
-		Model:   r.Model,
-		Size:    r.Size,
-		Width:   r.Width,
-		Height:  r.Height,
-		Quality: "hd",
+		Prompt: r.Prompt,
+		Model:  r.Model,
+		Size:   r.Size,
+		Width:  r.Width,
+		Height: r.Height,
 	}
-	if err := req.Validate(); err != nil {
+	isHD, isWide, err := req.Validate()
+	if err != nil {
 		return "", fmt.Errorf("validation error: %w", err)
+	}
+	// set the receipt model
+	if isHD && isWide {
+		r.Model = llm.ModelDalle3HDWide
+	} else if isHD {
+		r.Model = llm.ModelDalle3HD
+	} else if isWide {
+		r.Model = llm.ModelDalle3Wide
 	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(req); err != nil {
@@ -123,27 +131,29 @@ func (c *Client) Prompt(ctx context.Context, r *rq.GenerateImageV1) (string, err
 
 // Validate checks if the request parameters are valid.
 // It also fills in default values for missing fields.
-func (r *ReqDalle) Validate() error {
+func (r *ReqDalle) Validate() (isHD, isWide bool, err error) {
 	if r.Prompt == "" {
-		return errors.New("prompt is required")
+		err = errors.New("prompt is required")
+		return
 	}
 	// Check if both size and dimensions are provided
 	if r.Size != "" && (r.Width != 0 || r.Height != 0) {
-		return errors.New("cannot specify both size and dimensions (width/height)")
+		err = errors.New("cannot specify both size and dimensions (width/height)")
+		return
 	}
 	// Validate size if provided
-	if r.Size != "" {
-		if !isValidSize(r.Size) {
-			return errors.New("invalid size: must be one of '1024x1024', '1792x1024', '1024x1792'")
-		}
-		return nil
+	if r.Size != "" && !isValidSize(r.Size) {
+		err = errors.New("invalid size: must be one of '1024x1024', '1792x1024', '1024x1792'")
+		return
 	}
 	// Validate width and height if provided
 	if (r.Width == 0 && r.Height != 0) || (r.Width != 0 && r.Height == 0) {
-		return errors.New("both width and height must be provided together")
+		err = errors.New("both width and height must be provided together")
+		return
 	}
 	if r.Width != 0 && r.Height != 0 && !isValidDimensions(r.Width, r.Height) {
-		return errors.New("invalid dimensions: must be one of '1024x1024', '1792x1024', '1024x1792'")
+		err = errors.New("invalid dimensions: must be one of '1024x1024', '1792x1024', '1024x1792'")
+		return
 	}
 	if r.Size == "" {
 		if r.Width != 0 && r.Height != 0 {
@@ -152,17 +162,17 @@ func (r *ReqDalle) Validate() error {
 			r.Size = "1024x1024"
 		}
 	}
+	isWide = checkWide(r.Size)
 	r.Width, r.Height = 0, 0
 	if r.Model == "" {
 		r.Model = llm.ModelDalle3
 	}
-	if r.N == 0 {
-		r.N = 1
-	}
-	if r.Quality == "" {
+	r.N = 1
+	if r.Model == llm.ModelDalle3HD {
 		r.Quality = "hd"
+		isHD = true
 	}
-	return nil
+	return
 }
 
 // isValidSize checks if the provided size string is valid.
@@ -180,4 +190,8 @@ func isValidDimensions(width, height int) bool {
 	return (width == 1024 && height == 1024) ||
 		(width == 1792 && height == 1024) ||
 		(width == 1024 && height == 1792)
+}
+
+func checkWide(size string) bool {
+	return size == "1792x1024" || size == "1024x1792"
 }

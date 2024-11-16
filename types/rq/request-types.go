@@ -58,7 +58,6 @@ type GenerateImageV1 struct {
 	PromptUpsampling string `json:"promptUpsampling,omitempty"`
 	Seed             int    `json:"seed,omitempty"`
 	SafetyTolerance  int    `json:"safetyTolerance,omitempty"`
-	Quality          string `json:"quality,omitempty"`
 }
 
 func (g GenerateImageV1) GetUserID() string { return g.UserID }

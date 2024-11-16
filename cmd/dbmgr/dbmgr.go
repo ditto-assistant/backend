@@ -49,8 +49,20 @@ func main() {
 		mode     Mode
 		userID   string
 	)
+	var shutdown sync.WaitGroup
+	defer shutdown.Wait()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	globalFlags := flag.NewFlagSet("global", flag.ExitOnError)
+	logLevelFlag := globalFlags.String("log", "info", "log level")
+	envFlag := globalFlags.String("env", envs.EnvLocal.String(), "ditto environment")
+	globalFlags.Parse(os.Args[1:])
+	var ll slog.Level
+	if err := ll.UnmarshalText([]byte(*logLevelFlag)); err != nil {
+		log.Fatalf("invalid log level: %s", err)
+	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: ll,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
 				return slog.Attr{}
@@ -58,15 +70,6 @@ func main() {
 			return a
 		},
 	})))
-	var shutdown sync.WaitGroup
-	defer shutdown.Wait()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Parse global flags
-	globalFlags := flag.NewFlagSet("global", flag.ExitOnError)
-	envFlag := globalFlags.String("env", envs.EnvLocal.String(), "ditto environment")
-	globalFlags.Parse(os.Args[1:])
 	os.Setenv("DITTO_ENV", *envFlag)
 	err := envs.Load()
 	if err != nil {
@@ -555,17 +558,23 @@ func applyMigration(ctx context.Context, file, version string) error {
 		if stmt == "" {
 			continue
 		}
-		_, err = db.D.ExecContext(ctx, stmt)
+		slog.Debug("applying statement", "statement", truncateString(stmt, 50))
+		result, err := db.D.ExecContext(ctx, stmt)
 		if err != nil {
 			return fmt.Errorf("error applying migration %s: %w", file, err)
 		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("error getting rows affected: %w", err)
+		}
+		slog.Debug("rows affected", "rows", rows)
 	}
 	_, err = db.D.ExecContext(ctx, "INSERT INTO migrations (name, version) VALUES (?, ?)", migrationName, version)
 	if err != nil {
 		return fmt.Errorf("error recording migration %s: %w", file, err)
 	}
 
-	slog.Debug("migration applied successfully")
+	slog.Info("migration applied successfully")
 	return nil
 }
 
@@ -576,13 +585,11 @@ func rollback(ctx context.Context, version string) error {
 		return fmt.Errorf("error reading rollback files: %w", err)
 	}
 	slices.Reverse(rollbackFiles)
-
 	for _, file := range rollbackFiles {
 		fileVersion := strings.TrimSuffix(filepath.Base(file), ".sql")
 		if fileVersion <= version {
 			break // Stop rolling back once we reach the target version
 		}
-
 		if err := applyRollback(ctx, file); err != nil {
 			return err
 		}
@@ -600,7 +607,6 @@ func applyRollback(ctx context.Context, file string) error {
 	if !tableExists {
 		return errors.New("migrations table does not exist, cannot apply rollback")
 	}
-
 	rollbackVersion := strings.TrimSuffix(filepath.Base(file), ".sql")
 	var count int
 	err = db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE version = ?", rollbackVersion).Scan(&count)
@@ -616,27 +622,23 @@ func applyRollback(ctx context.Context, file string) error {
 	if err != nil {
 		return fmt.Errorf("error reading rollback file %s: %w", file, err)
 	}
-
-	// Split the contents into statements, respecting SQL strings
 	statements := splitSQLStatements(string(contents))
-
 	for _, stmt := range statements {
 		stmt = strings.TrimSpace(stmt)
 		if stmt == "" {
 			continue
 		}
+		slog.Debug("rolling back statement", "statement", truncateString(stmt, 50))
 		_, err = db.D.ExecContext(ctx, stmt)
 		if err != nil {
 			return fmt.Errorf("error rolling back version %s: %w", rollbackVersion, err)
 		}
 	}
-
 	_, err = db.D.ExecContext(ctx, "DELETE FROM migrations WHERE version = ?", rollbackVersion)
 	if err != nil {
 		return fmt.Errorf("error deleting migration records for version %s: %w", rollbackVersion, err)
 	}
-
-	slog.Debug("rollback applied successfully", "version", rollbackVersion)
+	slog.Info("rollback applied successfully", "version", rollbackVersion)
 	return nil
 }
 
@@ -717,4 +719,11 @@ func setBalance(ctx context.Context, uid string, balance int64) error {
 		"uid", uid,
 		"new_balance", numfmt.LargeNumber(balance))
 	return nil
+}
+
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen]
 }

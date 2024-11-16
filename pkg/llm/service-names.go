@@ -18,8 +18,6 @@ const (
 	ModelGemini15Pro ServiceName = "gemini-1.5-pro"
 	// ModelClaude35Sonnet is Anthropic's Claude 3.5 Sonnet model.
 	ModelClaude35Sonnet ServiceName = "claude-3-5-sonnet"
-	// ModelDalle3 is OpenAI's DALL-E 3 model.
-	ModelDalle3 ServiceName = "dall-e-3"
 	// ModelMistralNemo is Mistral's nemo model.
 	ModelMistralNemo ServiceName = "mistral-nemo"
 	// ModelMistralLarge is Mistral's large model.
@@ -34,6 +32,14 @@ const (
 	ModelFlux1Pro ServiceName = "flux-1-pro"
 	// ModelFlux1Dev is BFL's FLUX.1 Dev model
 	ModelFlux1Dev ServiceName = "flux-1-dev"
+	// DALL-E Models
+	ModelDalle3       ServiceName = "dall-e-3"
+	ModelDalle3Wide   ServiceName = "dall-e-3-wide"
+	ModelDalle3HD     ServiceName = "dall-e-3-hd"
+	ModelDalle3HDWide ServiceName = "dall-e-3-hd-wide"
+	ModelDalle2       ServiceName = "dall-e-2"
+	ModelDalle2Small  ServiceName = "dall-e-2-small"
+	ModelDalle2Tiny   ServiceName = "dall-e-2-tiny"
 )
 
 // Search Engines
