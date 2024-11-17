@@ -198,6 +198,7 @@ func main() {
 	}
 }
 
+// - MARK: Sync Balance
 func syncBalance(ctx context.Context) error {
 	slog.Debug("syncing balance from firestore to database")
 	count, err := db.GetDittoTokensPerDollar(ctx)
@@ -244,6 +245,8 @@ func syncBalance(ctx context.Context) error {
 
 	return nil
 }
+
+// - MARK: Print Balance
 
 func firestorePrintUser(ctx context.Context, userID string) error {
 	app, err := firebase.NewApp(ctx, nil)
@@ -293,6 +296,8 @@ func firestorePrintUser(ctx context.Context, userID string) error {
 	return nil
 }
 
+// - MARK: Search
+
 func testSearch(ctx context.Context, query string) error {
 	slog.Debug("test search", "query", query)
 	minVersion := "v0.0.1"
@@ -341,6 +346,8 @@ func testSearch(ctx context.Context, query string) error {
 
 	return nil
 }
+
+// - MARK: Ingest Examples
 
 func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error {
 	slog.Info("ingesting prompt examples", "folder", folder, "dry-run", dryRun)
@@ -499,6 +506,8 @@ func (te ToolExamples) Embed(ctx context.Context, embedder ai.Embedder) error {
 	return nil
 }
 
+// - MARK: Migrate
+
 func migrate(ctx context.Context) error {
 	slog.Info("migrating database")
 	_, err := db.D.ExecContext(ctx, `
@@ -577,6 +586,8 @@ func applyMigration(ctx context.Context, file, version string) error {
 	slog.Info("migration applied successfully")
 	return nil
 }
+
+// - MARK: Rollback
 
 func rollback(ctx context.Context, version string) error {
 	slog.Info("rolling back database", "version", version)
@@ -696,6 +707,8 @@ func getLatestVersion(ctx context.Context) (string, error) {
 	}
 	return version, nil
 }
+
+// - MARK: Set Balance
 
 func setBalance(ctx context.Context, uid string, balance int64) error {
 	slog.Info("setting user balance", "uid", uid, "balance", numfmt.LargeNumber(balance))
