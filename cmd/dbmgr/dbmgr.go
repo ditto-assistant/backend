@@ -76,7 +76,7 @@ func main() {
 		log.Fatalf("error loading environment file: %s", err)
 	}
 	if globalFlags.NArg() < 1 {
-		log.Fatalf("usage: %s [-env <environment>] <command> [args]", os.Args[0])
+		log.Fatalf("usage: %s [-env <environment>] [-log <log level>] <command> [args]", os.Args[0])
 	}
 	subcommand := globalFlags.Arg(0)
 
