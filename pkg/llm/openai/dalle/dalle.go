@@ -84,17 +84,10 @@ func (c *Client) Prompt(ctx context.Context, r *rq.GenerateImageV1) (string, err
 		Width:  r.Width,
 		Height: r.Height,
 	}
-	isHD, isWide, err := req.Validate()
+	var err error
+	r.Model, err = req.Build()
 	if err != nil {
 		return "", fmt.Errorf("validation error: %w", err)
-	}
-	// set the receipt model
-	if isHD && isWide {
-		r.Model = llm.ModelDalle3HDWide
-	} else if isHD {
-		r.Model = llm.ModelDalle3HD
-	} else if isWide {
-		r.Model = llm.ModelDalle3Wide
 	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(req); err != nil {
@@ -129,69 +122,77 @@ func (c *Client) Prompt(ctx context.Context, r *rq.GenerateImageV1) (string, err
 	return dalleResp.Data[0].URL, nil
 }
 
-// Validate checks if the request parameters are valid.
+// Build checks if the request parameters are valid.
 // It also fills in default values for missing fields.
-func (r *ReqDalle) Validate() (isHD, isWide bool, err error) {
+func (r *ReqDalle) Build() (receiptModel llm.ServiceName, err error) {
 	if r.Prompt == "" {
 		err = errors.New("prompt is required")
 		return
 	}
-	// Check if both size and dimensions are provided
 	if r.Size != "" && (r.Width != 0 || r.Height != 0) {
-		err = errors.New("cannot specify both size and dimensions (width/height)")
+		err = fmt.Errorf("cannot specify both size: %s and dimensions (width: %d, height: %d)", r.Size, r.Width, r.Height)
 		return
 	}
-	// Validate size if provided
-	if r.Size != "" && !isValidSize(r.Size) {
-		err = errors.New("invalid size: must be one of '1024x1024', '1792x1024', '1024x1792'")
-		return
-	}
-	// Validate width and height if provided
-	if (r.Width == 0 && r.Height != 0) || (r.Width != 0 && r.Height == 0) {
-		err = errors.New("both width and height must be provided together")
-		return
-	}
-	if r.Width != 0 && r.Height != 0 && !isValidDimensions(r.Width, r.Height) {
-		err = errors.New("invalid dimensions: must be one of '1024x1024', '1792x1024', '1024x1792'")
-		return
+	sz, err := r.DimToSize()
+	if err != nil {
+		return "", err
 	}
 	if r.Size == "" {
-		if r.Width != 0 && r.Height != 0 {
-			r.Size = fmt.Sprintf("%dx%d", r.Width, r.Height)
-		} else {
-			r.Size = "1024x1024"
-		}
+		r.Size = sz
 	}
-	isWide = checkWide(r.Size)
+	r.N = 1
+	return r.ValidateSizeForModel()
+}
+
+func (r *ReqDalle) ValidateSizeForModel() (receiptModel llm.ServiceName, err error) {
 	r.Width, r.Height = 0, 0
 	if r.Model == "" {
 		r.Model = llm.ModelDalle3
 	}
-	r.N = 1
-	if r.Model == llm.ModelDalle3HD {
+	switch r.Model {
+	case llm.ModelDalle3HD:
 		r.Quality = "hd"
-		isHD = true
+		switch r.Size {
+		case "1024x1024":
+			receiptModel = llm.ModelDalle3HD
+		case "1792x1024", "1024x1792":
+			receiptModel = llm.ModelDalle3HDWide
+		default:
+			err = fmt.Errorf("invalid size: %s for model: %s", r.Size, r.Model)
+			return
+		}
+	case llm.ModelDalle3:
+		switch r.Size {
+		case "1024x1024":
+			receiptModel = llm.ModelDalle3
+		case "1792x1024", "1024x1792":
+			receiptModel = llm.ModelDalle3Wide
+		default:
+			err = fmt.Errorf("invalid size: %s for model: %s", r.Size, r.Model)
+			return
+		}
+	case llm.ModelDalle2:
+		switch r.Size {
+		case "1024x1024":
+			receiptModel = llm.ModelDalle2
+		case "512x512":
+			receiptModel = llm.ModelDalle2Small
+		case "256x256":
+			receiptModel = llm.ModelDalle2Tiny
+		default:
+			err = fmt.Errorf("invalid size: %s for model: %s", r.Size, r.Model)
+			return
+		}
 	}
 	return
 }
 
-// isValidSize checks if the provided size string is valid.
-func isValidSize(size string) bool {
-	validSizes := map[string]bool{
-		"1024x1024": true,
-		"1792x1024": true,
-		"1024x1792": true,
+func (r *ReqDalle) DimToSize() (string, error) {
+	if r.Width == 0 && r.Height == 0 {
+		return "", nil
 	}
-	return validSizes[size]
-}
-
-// isValidDimensions checks if the provided width and height combination is valid.
-func isValidDimensions(width, height int) bool {
-	return (width == 1024 && height == 1024) ||
-		(width == 1792 && height == 1024) ||
-		(width == 1024 && height == 1792)
-}
-
-func checkWide(size string) bool {
-	return size == "1792x1024" || size == "1024x1792"
+	if r.Width == 0 || r.Height == 0 {
+		return "", fmt.Errorf("both width and height must be provided together (width: %d, height: %d)", r.Width, r.Height)
+	}
+	return fmt.Sprintf("%dx%d", r.Width, r.Height), nil
 }
