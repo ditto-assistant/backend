@@ -30,8 +30,7 @@ import (
 type Mode int
 
 const (
-	ModeUnknown Mode = iota
-	ModeMigrate
+	ModeMigrate Mode = iota
 	ModeRollback
 	ModeSearch
 	ModeIngest
