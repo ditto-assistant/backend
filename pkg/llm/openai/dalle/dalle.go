@@ -155,8 +155,10 @@ func (r *ReqDalle) ValidateSizeForModel() (receiptModel llm.ServiceName, err err
 		switch r.Size {
 		case "1024x1024":
 			receiptModel = llm.ModelDalle3HD
-		case "1792x1024", "1024x1792":
+		case "1792x1024":
 			receiptModel = llm.ModelDalle3HDWide
+		case "1024x1792":
+			receiptModel = llm.ModelDalle3HDTall
 		default:
 			err = fmt.Errorf("invalid size: %s for model: %s", r.Size, r.Model)
 			return
@@ -165,8 +167,10 @@ func (r *ReqDalle) ValidateSizeForModel() (receiptModel llm.ServiceName, err err
 		switch r.Size {
 		case "1024x1024":
 			receiptModel = llm.ModelDalle3
-		case "1792x1024", "1024x1792":
+		case "1792x1024":
 			receiptModel = llm.ModelDalle3Wide
+		case "1024x1792":
+			receiptModel = llm.ModelDalle3Tall
 		default:
 			err = fmt.Errorf("invalid size: %s for model: %s", r.Size, r.Model)
 			return

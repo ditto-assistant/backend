@@ -32,11 +32,16 @@ const (
 	ModelFlux1Pro ServiceName = "flux-1-pro"
 	// ModelFlux1Dev is BFL's FLUX.1 Dev model
 	ModelFlux1Dev ServiceName = "flux-1-dev"
-	// DALL-E Models
+)
+
+// DALL-E Models
+const (
 	ModelDalle3       ServiceName = "dall-e-3"
 	ModelDalle3Wide   ServiceName = "dall-e-3-wide"
+	ModelDalle3Tall   ServiceName = "dall-e-3-tall"
 	ModelDalle3HD     ServiceName = "dall-e-3-hd"
 	ModelDalle3HDWide ServiceName = "dall-e-3-hd-wide"
+	ModelDalle3HDTall ServiceName = "dall-e-3-hd-tall"
 	ModelDalle2       ServiceName = "dall-e-2"
 	ModelDalle2Small  ServiceName = "dall-e-2-small"
 	ModelDalle2Tiny   ServiceName = "dall-e-2-tiny"
