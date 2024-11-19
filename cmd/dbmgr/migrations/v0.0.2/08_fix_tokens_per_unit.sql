@@ -1,4 +1,4 @@
-CREATE TABLE tokens_per_unit_new (
+CREATE TABLE IF NOT EXISTS tokens_per_unit_new (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     count INTEGER NOT NULL,
@@ -17,6 +17,8 @@ WHERE id IN (
 DROP TRIGGER IF EXISTS after_insert_receipts;
 
 DROP TRIGGER IF EXISTS update_tokens_per_unit_timestamp;
+
+DROP TRIGGER IF EXISTS after_services_update_tokens_per_unit;
 
 DROP TABLE tokens_per_unit;
 
