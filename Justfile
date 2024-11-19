@@ -14,10 +14,10 @@ kill:
 	lsof -i :3400 | grep LISTEN | awk '{print $2}' | xargs kill
 
 db *ARGS:
-	go run cmd/dbmgr/main.go {{ARGS}}
+	go run cmd/dbmgr/dbmgr.go {{ARGS}}
 
 search *ARGS:
-	go run cmd/dbmgr/main.go search {{ARGS}}
+	go run cmd/dbmgr/dbmgr.go search {{ARGS}}
 
 build:
 	docker build -t ditto-backend .

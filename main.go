@@ -34,6 +34,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/llm/llama"
 	"github.com/ditto-assistant/backend/pkg/llm/mistral"
 	"github.com/ditto-assistant/backend/pkg/llm/openai"
+	"github.com/ditto-assistant/backend/pkg/llm/openai/dalle"
 	"github.com/ditto-assistant/backend/pkg/middleware"
 	"github.com/ditto-assistant/backend/pkg/numfmt"
 	"github.com/ditto-assistant/backend/pkg/search/brave"
@@ -421,6 +422,7 @@ func main() {
 		fmt.Fprintln(w, url)
 	})
 
+	dalleClient := dalle.NewClient(secr.OPENAI_DALLE_API_KEY.String(), llm.HttpClient)
 	// - MARK: generate-image
 	mux.HandleFunc("POST /v1/generate-image", func(w http.ResponseWriter, r *http.Request) {
 		tok, err := auth.VerifyToken(r)
@@ -438,9 +440,6 @@ func main() {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		if bod.Model == "" {
-			bod.Model = llm.ModelDalle3
-		}
 		user := db.User{UID: bod.UserID}
 		ctx := r.Context()
 		slog := slog.With("user_id", bod.UserID, "model", bod.Model)
@@ -453,62 +452,12 @@ func main() {
 			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 			return
 		}
-		if bod.Size == "" {
-			bod.Size = "1024x1024"
-		}
-		type RequestImageOpenAI struct {
-			Prompt string          `json:"prompt"`
-			Model  llm.ServiceName `json:"model"`
-			N      int             `json:"n"`
-			Size   string          `json:"size"`
-		}
-		var buf bytes.Buffer
-		if err := json.NewEncoder(&buf).Encode(RequestImageOpenAI{
-			Prompt: bod.Prompt,
-			Model:  bod.Model,
-			N:      1,
-			Size:   bod.Size,
-		}); err != nil {
-			slog.Error("failed to encode image request", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/images/generations", &buf)
+		url, err := dalleClient.Prompt(ctx, &bod)
 		if err != nil {
-			slog.Error("failed to create image request", "error", err)
+			slog.Error("failed to generate image", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+secr.OPENAI_DALLE_API_KEY.String())
-		resp, err := llm.HttpClient.Do(req)
-		if err != nil {
-			slog.Error("failed to send image request", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			slog.Error("failed to generate image", "status", resp.Status, "status code", resp.StatusCode)
-			http.Error(w, fmt.Sprintf("failed to generate image: %s", resp.Status), resp.StatusCode)
-			return
-		}
-		var dalleRsp struct {
-			Data []struct {
-				URL string `json:"url"`
-			} `json:"data"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&dalleRsp); err != nil {
-			slog.Error("failed to decode image response", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if len(dalleRsp.Data) == 0 {
-			slog.Error("no image URL returned")
-			http.Error(w, "no image URL returned", http.StatusInternalServerError)
-			return
-		}
-		url := dalleRsp.Data[0].URL
 		fmt.Fprintln(w, url)
 		slog.Debug("generated image", "url", url)
 
@@ -560,7 +509,7 @@ func main() {
 				slog.Error("failed to insert receipt", "error", err)
 			}
 		}()
-		slog.Debug("generated image", "url", dalleRsp.Data[0].URL)
+		slog.Debug("generated image", "url", url)
 	})
 
 	// - MARK: search-examples

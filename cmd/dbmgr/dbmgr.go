@@ -30,8 +30,7 @@ import (
 type Mode int
 
 const (
-	ModeUnknown Mode = iota
-	ModeMigrate
+	ModeMigrate Mode = iota
 	ModeRollback
 	ModeSearch
 	ModeIngest
@@ -49,8 +48,20 @@ func main() {
 		mode     Mode
 		userID   string
 	)
+	var shutdown sync.WaitGroup
+	defer shutdown.Wait()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	globalFlags := flag.NewFlagSet("global", flag.ExitOnError)
+	logLevelFlag := globalFlags.String("log", "info", "log level")
+	envFlag := globalFlags.String("env", envs.EnvLocal.String(), "ditto environment")
+	globalFlags.Parse(os.Args[1:])
+	var ll slog.Level
+	if err := ll.UnmarshalText([]byte(*logLevelFlag)); err != nil {
+		log.Fatalf("invalid log level: %s", err)
+	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelDebug,
+		Level: ll,
 		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
 			if a.Key == slog.TimeKey {
 				return slog.Attr{}
@@ -58,23 +69,13 @@ func main() {
 			return a
 		},
 	})))
-	var shutdown sync.WaitGroup
-	defer shutdown.Wait()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// Parse global flags
-	globalFlags := flag.NewFlagSet("global", flag.ExitOnError)
-	envFlag := globalFlags.String("env", envs.EnvLocal.String(), "ditto environment")
-	globalFlags.Parse(os.Args[1:])
-	dittoEnv = envs.Env(*envFlag)
-	envs.DITTO_ENV = dittoEnv
-	err := dittoEnv.EnvFile().Load()
+	os.Setenv("DITTO_ENV", *envFlag)
+	err := envs.Load()
 	if err != nil {
 		log.Fatalf("error loading environment file: %s", err)
 	}
 	if globalFlags.NArg() < 1 {
-		log.Fatalf("usage: %s [-env <environment>] <command> [args]", os.Args[0])
+		log.Fatalf("usage: %s [-env <environment>] [-log <log level>] <command> [args]", os.Args[0])
 	}
 	subcommand := globalFlags.Arg(0)
 
@@ -196,6 +197,7 @@ func main() {
 	}
 }
 
+// - MARK: Sync Balance
 func syncBalance(ctx context.Context) error {
 	slog.Debug("syncing balance from firestore to database")
 	count, err := db.GetDittoTokensPerDollar(ctx)
@@ -242,6 +244,8 @@ func syncBalance(ctx context.Context) error {
 
 	return nil
 }
+
+// - MARK: Print Balance
 
 func firestorePrintUser(ctx context.Context, userID string) error {
 	app, err := firebase.NewApp(ctx, nil)
@@ -291,6 +295,8 @@ func firestorePrintUser(ctx context.Context, userID string) error {
 	return nil
 }
 
+// - MARK: Search
+
 func testSearch(ctx context.Context, query string) error {
 	slog.Debug("test search", "query", query)
 	minVersion := "v0.0.1"
@@ -339,6 +345,8 @@ func testSearch(ctx context.Context, query string) error {
 
 	return nil
 }
+
+// - MARK: Ingest Examples
 
 func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error {
 	slog.Info("ingesting prompt examples", "folder", folder, "dry-run", dryRun)
@@ -497,6 +505,8 @@ func (te ToolExamples) Embed(ctx context.Context, embedder ai.Embedder) error {
 	return nil
 }
 
+// - MARK: Migrate
+
 func migrate(ctx context.Context) error {
 	slog.Info("migrating database")
 	_, err := db.D.ExecContext(ctx, `
@@ -556,19 +566,27 @@ func applyMigration(ctx context.Context, file, version string) error {
 		if stmt == "" {
 			continue
 		}
-		_, err = db.D.ExecContext(ctx, stmt)
+		slog.Debug("applying statement", "statement", truncateString(stmt, 50))
+		result, err := db.D.ExecContext(ctx, stmt)
 		if err != nil {
 			return fmt.Errorf("error applying migration %s: %w", file, err)
 		}
+		rows, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("error getting rows affected: %w", err)
+		}
+		slog.Debug("rows affected", "rows", rows)
 	}
 	_, err = db.D.ExecContext(ctx, "INSERT INTO migrations (name, version) VALUES (?, ?)", migrationName, version)
 	if err != nil {
 		return fmt.Errorf("error recording migration %s: %w", file, err)
 	}
 
-	slog.Debug("migration applied successfully")
+	slog.Info("migration applied successfully")
 	return nil
 }
+
+// - MARK: Rollback
 
 func rollback(ctx context.Context, version string) error {
 	slog.Info("rolling back database", "version", version)
@@ -577,13 +595,11 @@ func rollback(ctx context.Context, version string) error {
 		return fmt.Errorf("error reading rollback files: %w", err)
 	}
 	slices.Reverse(rollbackFiles)
-
 	for _, file := range rollbackFiles {
 		fileVersion := strings.TrimSuffix(filepath.Base(file), ".sql")
 		if fileVersion <= version {
 			break // Stop rolling back once we reach the target version
 		}
-
 		if err := applyRollback(ctx, file); err != nil {
 			return err
 		}
@@ -601,7 +617,6 @@ func applyRollback(ctx context.Context, file string) error {
 	if !tableExists {
 		return errors.New("migrations table does not exist, cannot apply rollback")
 	}
-
 	rollbackVersion := strings.TrimSuffix(filepath.Base(file), ".sql")
 	var count int
 	err = db.D.QueryRowContext(ctx, "SELECT COUNT(*) FROM migrations WHERE version = ?", rollbackVersion).Scan(&count)
@@ -617,27 +632,23 @@ func applyRollback(ctx context.Context, file string) error {
 	if err != nil {
 		return fmt.Errorf("error reading rollback file %s: %w", file, err)
 	}
-
-	// Split the contents into statements, respecting SQL strings
 	statements := splitSQLStatements(string(contents))
-
 	for _, stmt := range statements {
 		stmt = strings.TrimSpace(stmt)
 		if stmt == "" {
 			continue
 		}
+		slog.Debug("rolling back statement", "statement", truncateString(stmt, 50))
 		_, err = db.D.ExecContext(ctx, stmt)
 		if err != nil {
 			return fmt.Errorf("error rolling back version %s: %w", rollbackVersion, err)
 		}
 	}
-
 	_, err = db.D.ExecContext(ctx, "DELETE FROM migrations WHERE version = ?", rollbackVersion)
 	if err != nil {
 		return fmt.Errorf("error deleting migration records for version %s: %w", rollbackVersion, err)
 	}
-
-	slog.Debug("rollback applied successfully", "version", rollbackVersion)
+	slog.Info("rollback applied successfully", "version", rollbackVersion)
 	return nil
 }
 
@@ -696,6 +707,8 @@ func getLatestVersion(ctx context.Context) (string, error) {
 	return version, nil
 }
 
+// - MARK: Set Balance
+
 func setBalance(ctx context.Context, uid string, balance int64) error {
 	slog.Info("setting user balance", "uid", uid, "balance", numfmt.LargeNumber(balance))
 
@@ -718,4 +731,11 @@ func setBalance(ctx context.Context, uid string, balance int64) error {
 		"uid", uid,
 		"new_balance", numfmt.LargeNumber(balance))
 	return nil
+}
+
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen]
 }

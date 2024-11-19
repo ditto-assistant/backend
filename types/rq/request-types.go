@@ -48,7 +48,16 @@ type GenerateImageV1 struct {
 	UserID string          `json:"userID"`
 	Prompt string          `json:"prompt"`
 	Model  llm.ServiceName `json:"model"`
-	Size   string          `json:"size"`
+
+	// DALL-E specific fields
+	Size string `json:"size,omitempty"`
+
+	// FLUX specific fields
+	Width            int    `json:"width,omitempty"`
+	Height           int    `json:"height,omitempty"`
+	PromptUpsampling string `json:"promptUpsampling,omitempty"`
+	Seed             int    `json:"seed,omitempty"`
+	SafetyTolerance  int    `json:"safetyTolerance,omitempty"`
 }
 
 func (g GenerateImageV1) GetUserID() string { return g.UserID }
