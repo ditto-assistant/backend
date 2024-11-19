@@ -4,6 +4,7 @@ go 1.23.2
 
 require (
 	firebase.google.com/go/v4 v4.15.0
+	github.com/aws/aws-sdk-go v1.55.5
 	github.com/firebase/genkit/go v0.1.2
 	github.com/rs/cors v1.11.1
 	github.com/stretchr/testify v1.9.0
@@ -27,7 +28,6 @@ require (
 	cloud.google.com/go/vertexai v0.12.1-0.20240711230438-265963bd5b91 // indirect
 	github.com/MicahParks/keyfunc v1.9.0 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.0 // indirect
-	github.com/aws/aws-sdk-go v1.55.5 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
