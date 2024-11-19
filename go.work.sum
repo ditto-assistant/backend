@@ -157,6 +157,7 @@ cloud.google.com/go/gkehub v0.15.1/go.mod h1:cyUwa9iFQYd/pI7IQYl6A+OF6M8uIbhmJr0
 cloud.google.com/go/gkehub v0.15.2/go.mod h1:8YziTOpwbM8LM3r9cHaOMy2rNgJHXZCrrmGgcau9zbQ=
 cloud.google.com/go/gkemulticloud v1.4.0/go.mod h1:rg8YOQdRKEtMimsiNCzZUP74bOwImhLRv9wQ0FwBUP4=
 cloud.google.com/go/gkemulticloud v1.4.1/go.mod h1:KRvPYcx53bztNwNInrezdfNF+wwUom8Y3FuJBwhvFpQ=
+cloud.google.com/go/grafeas v0.3.11/go.mod h1:dcQyG2+T4tBgG0MvJAh7g2wl/xHV2w+RZIqivwuLjNg=
 cloud.google.com/go/gsuiteaddons v1.7.1/go.mod h1:SxM63xEPFf0p/plgh4dP82mBSKtp2RWskz5DpVo9jh8=
 cloud.google.com/go/gsuiteaddons v1.7.2/go.mod h1:GD32J2rN/4APilqZw4JKmwV84+jowYYMkEVwQEYuAWc=
 cloud.google.com/go/iam v1.1.7/go.mod h1:J4PMPg8TtyurAUvSmPj8FF3EDgY1SPRZxcUGrn7WXGA=
@@ -455,6 +456,8 @@ github.com/karrick/godirwalk v1.8.0/go.mod h1:H5KPZjojv4lE+QYImBI8xVtrBRgYrIVsaR
 github.com/karrick/godirwalk v1.10.3/go.mod h1:RoGL9dQei4vP9ilrpETWE8CLOZ1kiN0LhBygSwrAsHA=
 github.com/kisielk/gotool v1.0.0/go.mod h1:XhKaO+MFFWcvkIS/tQcRk01m1F5IRFswLeQ+oQHNcck=
 github.com/klauspost/compress v1.13.6/go.mod h1:/3/Vjq9QcHkK5uEr5lBEmyoZ1iFhe47etQ6QUkpK6sk=
+github.com/klauspost/compress v1.16.7/go.mod h1:ntbaceVETuRiXiv4DpjP66DpAtAGkEQskQzEyD//IeE=
+github.com/klauspost/cpuid/v2 v2.2.5/go.mod h1:Lcz8mBdAVJIBVzewtcLocK12l3Y+JytZYpaMropDUws=
 github.com/konsorten/go-windows-terminal-sequences v1.0.1/go.mod h1:T0+1ngSBFLxvqU3pZ+m/2kptfBszLMUkC4ZK/EgS/cQ=
 github.com/konsorten/go-windows-terminal-sequences v1.0.2/go.mod h1:T0+1ngSBFLxvqU3pZ+m/2kptfBszLMUkC4ZK/EgS/cQ=
 github.com/kr/fs v0.1.0/go.mod h1:FFnZGqtBN9Gxj7eW1uZ42v5BccTP0vu6NEaFoC2HwRg=

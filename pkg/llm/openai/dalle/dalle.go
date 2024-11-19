@@ -146,11 +146,9 @@ func (r *ReqDalle) Build() (receiptModel llm.ServiceName, err error) {
 
 func (r *ReqDalle) ValidateSizeForModel() (receiptModel llm.ServiceName, err error) {
 	r.Width, r.Height = 0, 0
-	if r.Model == "" {
-		r.Model = llm.ModelDalle3
-	}
 	switch r.Model {
 	case llm.ModelDalle3HD:
+		r.Model = llm.ModelDalle3
 		r.Quality = "hd"
 		switch r.Size {
 		case "1024x1024":

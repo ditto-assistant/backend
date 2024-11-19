@@ -440,9 +440,6 @@ func main() {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		if bod.Model == "" {
-			bod.Model = llm.ModelDalle3
-		}
 		user := db.User{UID: bod.UserID}
 		ctx := r.Context()
 		slog := slog.With("user_id", bod.UserID, "model", bod.Model)
