@@ -5,7 +5,7 @@ go 1.23.2
 require (
 	firebase.google.com/go/v4 v4.15.0
 	github.com/ditto-assistant/backend v0.0.2
-	github.com/firebase/genkit/go v0.1.2
+	github.com/firebase/genkit/go v0.2.0
 	github.com/tursodatabase/go-libsql v0.0.0-20241011135853-3effbb6dea5c
 	golang.org/x/sync v0.9.0
 )
