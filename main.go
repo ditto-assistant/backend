@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,8 +23,10 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/cfg/secr"
+	"github.com/ditto-assistant/backend/pkg/api/accounts"
 	"github.com/ditto-assistant/backend/pkg/api/stripe"
 	"github.com/ditto-assistant/backend/pkg/db"
+	"github.com/ditto-assistant/backend/pkg/db/users"
 	"github.com/ditto-assistant/backend/pkg/fbase"
 	"github.com/ditto-assistant/backend/pkg/llm"
 	"github.com/ditto-assistant/backend/pkg/llm/claude"
@@ -36,9 +37,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/llm/openai"
 	"github.com/ditto-assistant/backend/pkg/llm/openai/dalle"
 	"github.com/ditto-assistant/backend/pkg/middleware"
-	"github.com/ditto-assistant/backend/pkg/numfmt"
 	"github.com/ditto-assistant/backend/pkg/search/brave"
-	"github.com/ditto-assistant/backend/types/rp"
 	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/firebase/genkit/go/plugins/vertexai"
 	"google.golang.org/api/customsearch/v1"
@@ -101,7 +100,7 @@ func main() {
 		}
 		slog := slog.With("user_id", bod.UserID, "model", bod.Model)
 		slog.Debug("Prompt Request")
-		user := db.User{UID: bod.UserID}
+		user := users.User{UID: bod.UserID}
 		ctx := r.Context()
 		if err := user.Get(ctx); err != nil {
 			slog.Error("failed to get user", "error", err)
@@ -203,7 +202,7 @@ func main() {
 			return
 
 		}
-		user := db.User{UID: bod.UserID}
+		user := users.User{UID: bod.UserID}
 		ctx := r.Context()
 		if err := user.Get(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -276,7 +275,7 @@ func main() {
 		if bod.NumResults == 0 {
 			bod.NumResults = 5
 		}
-		user := db.User{UID: bod.UserID}
+		user := users.User{UID: bod.UserID}
 		ctx := r.Context()
 		if err := user.Get(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -440,7 +439,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		user := db.User{UID: bod.UserID}
+		user := users.User{UID: bod.UserID}
 		ctx := r.Context()
 		slog := slog.With("user_id", bod.UserID, "model", bod.Model)
 		if err := user.Get(ctx); err != nil {
@@ -545,98 +544,7 @@ func main() {
 		}
 	})
 
-	// Aidrop tokens every 24 hours when the user logs in
-	const airdropTokens = 20_000_000
-	// - MARK: balance
-	mux.HandleFunc("GET /v1/balance", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := auth.VerifyToken(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		var bod rq.BalanceV1
-		if err := bod.FromQuery(r); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		err = tok.Check(bod)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		var q1 struct {
-			ID            int64
-			LastAirdropAt sql.NullTime
-		}
-		ctx := r.Context()
-		err = db.D.QueryRowContext(ctx, `
-			SELECT id, last_airdrop_at FROM users WHERE uid = ?
-		`, bod.UserID).Scan(&q1.ID, &q1.LastAirdropAt)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				user := db.User{
-					UID:                bod.UserID,
-					Balance:            airdropTokens,
-					TotalTokensAirdrop: airdropTokens,
-				}
-				if err := user.Insert(ctx); err != nil {
-					slog.Error("failed to insert user", "uid", bod.UserID, "error", err)
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-			} else {
-				slog.Error("failed to get user", "uid", bod.UserID, "error", err)
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
-		if !q1.LastAirdropAt.Valid || time.Since(q1.LastAirdropAt.Time) > 24*time.Hour {
-			_, err = db.D.ExecContext(ctx, `
-				UPDATE users SET
-					balance = balance + ?,
-					total_tokens_airdropped = total_tokens_airdropped + ?,
-					last_airdrop_at = CURRENT_TIMESTAMP
-				WHERE id = ?
-			`, airdropTokens, airdropTokens, q1.ID)
-			if err != nil {
-				slog.Error("failed to airdrop tokens", "uid", bod.UserID, "error", err)
-			}
-			slog.Info("airdropped tokens", "uid", bod.UserID, "tokens", airdropTokens)
-		}
-
-		var q struct {
-			Balance  int64
-			Images   float64
-			Searches float64
-			Dollars  float64
-		}
-		err = db.D.QueryRowContext(ctx, `
-			SELECT users.balance,
-				   CAST(users.balance AS FLOAT) / (SELECT CAST(count AS FLOAT) FROM tokens_per_unit WHERE name = 'dollar'),
-				   (users.balance / (SELECT count FROM tokens_per_unit WHERE name = 'image')),
-				   (users.balance / (SELECT count FROM tokens_per_unit WHERE name = 'search'))
-			FROM users
-			WHERE id = ?`, q1.ID).
-			Scan(&q.Balance, &q.Dollars, &q.Images, &q.Searches)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				slog.Warn("user not found, 0 balance", "uid", bod.UserID)
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(rp.BalanceV1{}.Zeroes())
-				return
-			}
-			slog.Error("failed to get balance", "uid", bod.UserID, "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		var rsp rp.BalanceV1
-		rsp.Balance = numfmt.LargeNumber(q.Balance)
-		rsp.USD = numfmt.USD(q.Dollars)
-		rsp.Images = numfmt.LargeNumber(int64(q.Images))
-		rsp.Searches = numfmt.LargeNumber(int64(q.Searches))
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rsp)
-	})
+	mux.HandleFunc("GET /v1/balance", accounts.GetBalanceV1)
 
 	// - MARK: stripe
 	mux.HandleFunc("POST /v1/stripe/checkout-session", stripe.CreateCheckoutSession)
