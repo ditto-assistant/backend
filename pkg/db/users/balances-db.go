@@ -12,74 +12,61 @@ import (
 	"github.com/ditto-assistant/backend/types/rq"
 )
 
-// HandleGetBalance manages the entire balance check flow including airdrops
-func HandleGetBalance(ctx context.Context, req rq.BalanceV1) (rp.BalanceV1, error) {
+// GetBalance manages the entire balance check flow including airdrops
+func GetBalance(ctx context.Context, req rq.BalanceV1) (rp.BalanceV1, error) {
 	if req.Email == "" {
-		return GetUserBalance(ctx, WithUserID(req.UserID))
+		return getBalance(ctx, WithUserID(req.UserID))
 	}
-
-	// Handle airdrop first
-	ok, err := HandleGetAirdrop(ctx, req)
+	res, err := handleAirdrop(ctx, req)
 	if err != nil {
 		return rp.BalanceV1{}, fmt.Errorf("failed to handle airdrop: %w", err)
 	}
-	if ok {
-		slog.Info("airdropped tokens", "uid", req.UserID, "tokens", airdropTokens)
-	}
-
-	// Get user ID from either UID or email
-	var userID int64
-	err = db.D.QueryRowContext(ctx, `
-		SELECT id FROM users WHERE uid = ? OR (email = ? AND email != '')
-	`, req.UserID, req.Email).Scan(&userID)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return rp.BalanceV1{}.Zeroes(), nil
-		}
-		return rp.BalanceV1{}, fmt.Errorf("failed to get user ID: %w", err)
-	}
-
-	// Get balance
-	balance, err := GetUserBalance(ctx, WithID(userID))
+	balance, err := getBalance(ctx, WithID(res.ID))
 	if err != nil {
 		return rp.BalanceV1{}, fmt.Errorf("failed to get user balance: %w", err)
 	}
-
+	if res.DropAmount > 0 {
+		slog.Info("airdropped tokens", "uid", req.UserID, "tokens", res.DropAmount)
+		balance.DropAmountRaw = res.DropAmount
+		balance.DropAmount = numfmt.LargeNumber(res.DropAmount)
+	}
 	return balance, nil
 }
 
-type RequestGetUserBalance struct {
+type requestGetUserBalance struct {
 	ID     *int64
 	UserID *string
 }
 
-type RequestGetUserBalanceOption func(*RequestGetUserBalance)
+type requestGetUserBalanceOption func(*requestGetUserBalance)
 
-func WithID(id int64) RequestGetUserBalanceOption {
-	return func(req *RequestGetUserBalance) {
+func WithID(id int64) requestGetUserBalanceOption {
+	return func(req *requestGetUserBalance) {
 		req.ID = &id
 	}
 }
 
-func WithUserID(userID string) RequestGetUserBalanceOption {
-	return func(req *RequestGetUserBalance) {
+func WithUserID(userID string) requestGetUserBalanceOption {
+	return func(req *requestGetUserBalance) {
 		req.UserID = &userID
 	}
 }
 
-func GetUserBalance(ctx context.Context, opts ...RequestGetUserBalanceOption) (rp.BalanceV1, error) {
-	var req RequestGetUserBalance
+func getBalance(ctx context.Context, opts ...requestGetUserBalanceOption) (rp.BalanceV1, error) {
+	var req requestGetUserBalance
 	for _, opt := range opts {
 		opt(&req)
 	}
 	var q struct {
-		Balance  int64
-		Images   float64
-		Searches float64
-		Dollars  float64
+		Balance         int64
+		TotalAirdropped int64
+		Images          float64
+		Searches        float64
+		Dollars         float64
 	}
 	const mainQuery = `
 		SELECT users.balance,
+			   users.total_tokens_airdropped,
 			   CAST(users.balance AS FLOAT) / (SELECT CAST(count AS FLOAT) FROM tokens_per_unit WHERE name = 'dollar'),
 			   (users.balance / (SELECT count FROM tokens_per_unit WHERE name = 'image')),
 			   (users.balance / (SELECT count FROM tokens_per_unit WHERE name = 'search'))
@@ -87,10 +74,10 @@ func GetUserBalance(ctx context.Context, opts ...RequestGetUserBalanceOption) (r
 	var err error
 	if req.ID != nil {
 		err = db.D.QueryRowContext(ctx, mainQuery+" WHERE id = ?", req.ID).
-			Scan(&q.Balance, &q.Dollars, &q.Images, &q.Searches)
+			Scan(&q.Balance, &q.TotalAirdropped, &q.Dollars, &q.Images, &q.Searches)
 	} else if req.UserID != nil {
 		err = db.D.QueryRowContext(ctx, mainQuery+" WHERE uid = ?", req.UserID).
-			Scan(&q.Balance, &q.Dollars, &q.Images, &q.Searches)
+			Scan(&q.Balance, &q.TotalAirdropped, &q.Dollars, &q.Images, &q.Searches)
 	}
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -106,5 +93,9 @@ func GetUserBalance(ctx context.Context, opts ...RequestGetUserBalanceOption) (r
 	rsp.Images = numfmt.LargeNumber(int64(q.Images))
 	rsp.SearchesRaw = int64(q.Searches)
 	rsp.Searches = numfmt.LargeNumber(int64(q.Searches))
+	if q.TotalAirdropped > 0 {
+		rsp.TotalAirdroppedRaw = q.TotalAirdropped
+		rsp.TotalAirdropped = numfmt.LargeNumber(q.TotalAirdropped)
+	}
 	return rsp, nil
 }

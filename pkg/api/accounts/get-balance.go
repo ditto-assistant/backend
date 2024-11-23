@@ -31,7 +31,7 @@ func GetBalanceV1(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	rsp, err := users.HandleGetBalance(r.Context(), bod)
+	rsp, err := users.GetBalance(r.Context(), bod)
 	if err != nil {
 		slog.Error("failed to handle balance request", "uid", bod.UserID, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)

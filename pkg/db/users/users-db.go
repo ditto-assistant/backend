@@ -8,12 +8,12 @@ import (
 )
 
 type User struct {
-	ID                 int64
-	UID                string
-	Email              sql.NullString
-	Balance            int64
-	LastAirdropAt      sql.NullTime
-	TotalTokensAirdrop int64
+	ID                    int64
+	UID                   string
+	Email                 sql.NullString
+	Balance               int64
+	LastAirdropAt         sql.NullTime
+	TotalTokensAirdropped int64
 }
 
 // Insert inserts a new user into the database.
@@ -21,7 +21,7 @@ type User struct {
 func (u *User) Insert(ctx context.Context) error {
 	res, err := db.D.ExecContext(ctx,
 		"INSERT INTO users (uid, email, balance, total_tokens_airdropped, last_airdrop_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
-		u.UID, u.Email, u.Balance, u.TotalTokensAirdrop)
+		u.UID, u.Email, u.Balance, u.TotalTokensAirdropped)
 	if err != nil {
 		return err
 	}
