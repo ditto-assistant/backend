@@ -1,6 +1,6 @@
 module github.com/ditto-assistant/backend/cmd/dbmgr
 
-go 1.23.2
+go 1.23.3
 
 require (
 	firebase.google.com/go/v4 v4.15.0

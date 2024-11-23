@@ -19,6 +19,7 @@ import (
 	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/db"
+	"github.com/ditto-assistant/backend/pkg/db/users"
 	"github.com/ditto-assistant/backend/pkg/llm"
 	"github.com/ditto-assistant/backend/pkg/numfmt"
 	"github.com/firebase/genkit/go/ai"
@@ -231,7 +232,7 @@ func syncBalance(ctx context.Context) error {
 
 		userID := doc.Ref.Parent.Parent.ID
 		newBalance := int64(userData.Balance * float64(count))
-		user := db.User{UID: userID, Balance: newBalance}
+		user := users.User{UID: userID, Balance: newBalance}
 		if err := user.InitBalance(ctx); err != nil {
 			return fmt.Errorf("error initializing user: %w", err)
 		}

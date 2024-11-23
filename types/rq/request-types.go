@@ -72,6 +72,7 @@ func (s SearchExamplesV1) GetUserID() string { return s.UserID }
 
 type BalanceV1 struct {
 	UserID string `json:"userID"`
+	Email  string `json:"email"`
 }
 
 func (b BalanceV1) GetUserID() string { return b.UserID }
@@ -82,6 +83,7 @@ func (b *BalanceV1) FromQuery(r *http.Request) error {
 		return errors.New("userID is required")
 	}
 	b.UserID = uid
+	b.Email = r.URL.Query().Get("email")
 	return nil
 }
 

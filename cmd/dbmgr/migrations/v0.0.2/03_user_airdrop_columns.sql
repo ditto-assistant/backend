@@ -4,6 +4,7 @@ SELECT CASE
     THEN 'ALTER TABLE users ADD COLUMN total_tokens_airdropped INTEGER DEFAULT 0;'
 END AS sql_statement
 WHERE sql_statement IS NOT NULL;
+
 -- Add last_airdrop_at if it doesn't exist
 SELECT CASE 
     WHEN NOT EXISTS(SELECT 1 FROM pragma_table_info('users') WHERE name='last_airdrop_at') 
