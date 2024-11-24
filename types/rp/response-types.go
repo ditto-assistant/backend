@@ -16,8 +16,12 @@ type BalanceV1 struct {
 
 func (BalanceV1) Zeroes() BalanceV1 {
 	return BalanceV1{
-		Balance:  "0",
-		Images:   "0",
-		Searches: "0",
+		Balance:     "0",
+		BalanceRaw:  0,
+		Images:      "0",
+		ImagesRaw:   0,
+		Searches:    "0",
+		SearchesRaw: 0,
+		USD:         "$0.00",
 	}
 }
