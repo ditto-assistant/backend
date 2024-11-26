@@ -47,6 +47,21 @@ const (
 	ModelDalle2Tiny   ServiceName = "dall-e-2-tiny"
 )
 
+// OpenAI GPT Models
+const (
+	ModelGPT4o     ServiceName = "gpt-4o"
+	ModelGPT4o1120 ServiceName = "gpt-4o-2024-11-20"
+
+	ModelGPT4oMini         ServiceName = "gpt-4o-mini"
+	ModelGPT4oMini20240718 ServiceName = "gpt-4o-mini-2024-07-18"
+
+	ModelO1Preview         ServiceName = "o1-preview"
+	ModelO1Preview20240912 ServiceName = "o1-preview-2024-09-12"
+
+	ModelO1Mini         ServiceName = "o1-mini"
+	ModelO1Mini20240912 ServiceName = "o1-mini-2024-09-12"
+)
+
 // Search Engines
 const (
 	// SearchEngineBrave is Brave's search engine.

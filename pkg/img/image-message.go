@@ -5,22 +5,12 @@ import (
 	"encoding/base64"
 	"io"
 	"net/http"
-
-	"github.com/firebase/genkit/go/ai"
 )
 
 type ImageData struct {
 	Base64    string
 	MimeType  string
 	MediaType string
-}
-
-func NewPart(ctx context.Context, url string) (*ai.Part, error) {
-	img, err := GetImageData(ctx, url)
-	if err != nil {
-		return nil, err
-	}
-	return ai.NewMediaPart("", "data:"+img.MimeType+";base64,"+img.Base64), nil
 }
 
 func GetImageData(ctx context.Context, url string) (*ImageData, error) {
@@ -51,13 +41,4 @@ func GetImageData(ctx context.Context, url string) (*ImageData, error) {
 		MimeType:  contentType,
 		MediaType: mediaType,
 	}, nil
-}
-
-// GetBase64 is kept for backward compatibility
-func GetBase64(ctx context.Context, url string) (string, error) {
-	imgData, err := GetImageData(ctx, url)
-	if err != nil {
-		return "", err
-	}
-	return imgData.Base64, nil
 }

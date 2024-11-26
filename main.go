@@ -36,6 +36,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/llm/mistral"
 	"github.com/ditto-assistant/backend/pkg/llm/openai"
 	"github.com/ditto-assistant/backend/pkg/llm/openai/dalle"
+	"github.com/ditto-assistant/backend/pkg/llm/openai/gpt"
 	"github.com/ditto-assistant/backend/pkg/middleware"
 	"github.com/ditto-assistant/backend/pkg/search/brave"
 	"github.com/ditto-assistant/backend/types/rq"
@@ -150,6 +151,17 @@ func main() {
 			err = m.Prompt(ctx, bod, &rsp)
 			if err != nil {
 				slog.Error("failed to prompt "+m.PrettyStr(), "error", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		case
+			llm.ModelO1Mini, llm.ModelO1Mini20240912,
+			llm.ModelO1Preview, llm.ModelO1Preview20240912,
+			llm.ModelGPT4oMini, llm.ModelGPT4oMini20240718,
+			llm.ModelGPT4o, llm.ModelGPT4o1120:
+			err = gpt.Prompt(ctx, bod, &rsp)
+			if err != nil {
+				slog.Error("failed to prompt "+bod.Model.String(), "error", err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
@@ -351,8 +363,14 @@ func main() {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		var bod rq.PresignedURLV1
-		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+		if err := json.Unmarshal(body, &bod); err != nil {
+			slog.Error("failed to decode request body", "error", err, "body", string(body), "path", r.URL.Path)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
