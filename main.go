@@ -351,8 +351,14 @@ func main() {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		var bod rq.PresignedURLV1
-		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+		if err := json.Unmarshal(body, &bod); err != nil {
+			slog.Error("failed to decode request body", "error", err, "body", string(body), "path", r.URL.Path)
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
