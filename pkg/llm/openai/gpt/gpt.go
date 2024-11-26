@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/img"
 	"github.com/ditto-assistant/backend/pkg/llm"
@@ -216,13 +215,6 @@ type StreamResponse struct {
 			RejectedPredictionTokens int `json:"rejected_prediction_tokens"`
 		} `json:"completion_tokens_details"`
 	} `json:"usage,omitempty"`
-}
-
-func init() {
-	err := envs.Load()
-	if err != nil {
-		panic(fmt.Sprintf("Error loading environment variables: %v", err))
-	}
 }
 
 func Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) error {
