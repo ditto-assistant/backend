@@ -34,3 +34,7 @@ test searching
 ```
 just search YOUR SEARCH QUERY
 ```
+
+# Reference
+## Pricing
+[GCP Vertex AI Model Garden Pricing (Partner Models)](https://cloud.google.com/vertex-ai/generative-ai/pricing#partner-models)
