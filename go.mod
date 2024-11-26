@@ -7,7 +7,7 @@ require (
 	github.com/aws/aws-sdk-go v1.55.5
 	github.com/firebase/genkit/go v0.2.1
 	github.com/rs/cors v1.11.1
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 	github.com/stripe/stripe-go/v80 v80.2.1
 	github.com/tursodatabase/go-libsql v0.0.0-20241011135853-3effbb6dea5c
 	golang.org/x/oauth2 v0.24.0
