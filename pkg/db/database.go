@@ -78,8 +78,8 @@ func setupReplica(ctx context.Context, shutdown *sync.WaitGroup) error {
 	slog.Debug("creating embedded replica connector", "url", envs.DB_URL_DITTO)
 	connector, err := libsql.NewEmbeddedReplicaConnector(dbPath, envs.DB_URL_DITTO,
 		libsql.WithEncryption(secr.LIBSQL_ENCRYPTION_KEY.String()),
-		libsql.WithSyncInterval(time.Minute),
 		libsql.WithAuthToken(secr.TURSO_AUTH_TOKEN.String()),
+		libsql.WithReadYourWrites(true),
 	)
 	if err != nil {
 		return fmt.Errorf("error creating connector: %w", err)
