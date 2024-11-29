@@ -26,6 +26,9 @@ var D *sql.DB
 
 func Setup(ctx context.Context, shutdown *sync.WaitGroup, mode ConnectionMode) error {
 	shutdown.Add(1)
+	if envs.DITTO_ENV == envs.EnvLocal {
+		return setupCloud(ctx, shutdown)
+	}
 
 	switch mode {
 	case ModeCloud:
@@ -71,17 +74,16 @@ func setupReplica(ctx context.Context, shutdown *sync.WaitGroup) error {
 	if err != nil {
 		return fmt.Errorf("error creating temporary directory: %w", err)
 	}
-
 	dbPath := filepath.Join(dir, dbName)
+	slog.Debug("creating embedded replica connector", "url", envs.DB_URL_DITTO)
 	connector, err := libsql.NewEmbeddedReplicaConnector(dbPath, envs.DB_URL_DITTO,
-		libsql.WithAuthToken(secr.TURSO_AUTH_TOKEN.String()),
 		libsql.WithEncryption(secr.LIBSQL_ENCRYPTION_KEY.String()),
 		libsql.WithSyncInterval(time.Minute),
+		libsql.WithAuthToken(secr.TURSO_AUTH_TOKEN.String()),
 	)
 	if err != nil {
 		return fmt.Errorf("error creating connector: %w", err)
 	}
-
 	D = sql.OpenDB(connector)
 	slog.Debug("db connected in replica mode", "url", envs.DB_URL_DITTO)
 

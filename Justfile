@@ -1,8 +1,10 @@
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 
-set dotenv-load
-go:
+local:
 	go run main.go
+
+staging:
+    DITTO_ENV=staging go run main.go
 
 deploy:
 	gcloud run deploy --port 3400 \
