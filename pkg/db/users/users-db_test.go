@@ -20,7 +20,7 @@ func TestUserBalanceUpdateTrigger(t *testing.T) {
 	defer cancel()
 	envs.DITTO_ENV = envs.EnvLocal
 	envs.Load()
-	err := db.Setup(ctx, &shutdown)
+	err := db.Setup(ctx, &shutdown, db.ModeCloud)
 	require.NoError(t, err, "Failed to set up database")
 
 	// Create a new user

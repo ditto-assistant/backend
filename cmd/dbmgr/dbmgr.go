@@ -162,7 +162,7 @@ func main() {
 	if err := secr.Setup(ctx); err != nil {
 		log.Fatalf("failed to initialize secrets: %s", err)
 	}
-	if err := db.Setup(ctx, &shutdown); err != nil {
+	if err := db.Setup(ctx, &shutdown, db.ModeCloud); err != nil {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
 
