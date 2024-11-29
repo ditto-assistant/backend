@@ -6,6 +6,7 @@ require (
 	firebase.google.com/go/v4 v4.15.0
 	github.com/aws/aws-sdk-go v1.55.5
 	github.com/firebase/genkit/go v0.2.1
+	github.com/omniaura/mapcache v0.1.1
 	github.com/rs/cors v1.11.1
 	github.com/stretchr/testify v1.10.0
 	github.com/stripe/stripe-go/v80 v80.2.1
