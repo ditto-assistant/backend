@@ -359,7 +359,10 @@ func main() {
 
 	// - MARK: presign-url
 	const presignTTL = 24 * time.Hour
-	urlCache, _ := mapcache.New[string, string](mapcache.WithTTL(presignTTL / 2))
+	urlCache, _ := mapcache.New[string, string](
+		mapcache.WithTTL(presignTTL/2),
+		mapcache.WithCleanup(bgCtx, presignTTL),
+	)
 	mux.HandleFunc("POST /v1/presign-url", func(w http.ResponseWriter, r *http.Request) {
 		tok, err := auth.VerifyToken(r)
 		if err != nil {
