@@ -62,7 +62,7 @@ func main() {
 	if err := secr.Setup(bgCtx); err != nil {
 		log.Fatalf("failed to initialize secrets: %s", err)
 	}
-	if err := db.Setup(bgCtx, &shutdownWG, db.ModeReplica); err != nil {
+	if err := db.Setup(bgCtx, &shutdownWG, db.ModeCloud); err != nil {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
 	stripe.Setup()
