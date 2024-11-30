@@ -3,8 +3,11 @@ package users
 import (
 	"context"
 	"database/sql"
+	"log/slog"
+	"time"
 
 	"github.com/ditto-assistant/backend/pkg/db"
+	"github.com/omniaura/mapcache"
 )
 
 type User struct {
@@ -33,15 +36,22 @@ func (u *User) Insert(ctx context.Context) error {
 	return nil
 }
 
+var userCache, _ = mapcache.New[string, User](mapcache.WithTTL(time.Minute))
+
 // Get gets a user by their UID.
 // If the user does not exist, it creates a new user.
-func (u *User) Get(ctx context.Context) error {
-	err := db.D.QueryRowContext(ctx,
-		"SELECT id, balance FROM users WHERE uid = ?", u.UID).
-		Scan(&u.ID, &u.Balance)
-	if err == sql.ErrNoRows {
-		err = u.Insert(ctx)
-	}
+func (u *User) Get(ctx context.Context) (err error) {
+	*u, err = userCache.Get(u.UID, func() (User, error) {
+		usr := User{UID: u.UID}
+		err := db.D.QueryRowContext(ctx,
+			"SELECT id, balance FROM users WHERE uid = ?", u.UID).
+			Scan(&usr.ID, &usr.Balance)
+		if err == sql.ErrNoRows {
+			err = usr.Insert(ctx)
+		}
+		slog.Debug("got user", "uid", usr.UID, "id", usr.ID, "balance", usr.Balance)
+		return usr, err
+	})
 	return err
 }
 
