@@ -109,7 +109,8 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if user.Balance <= 0 {
+		// llama32 is free
+		if user.Balance <= 0 && bod.Model != llm.ModelLlama32 {
 			slog.Error("user balance is 0", "balance", user.Balance)
 			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 			return
@@ -219,10 +220,6 @@ func main() {
 		ctx := r.Context()
 		if err := user.Get(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if user.Balance <= 0 {
-			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 			return
 		}
 
