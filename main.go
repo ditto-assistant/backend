@@ -41,6 +41,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/search/brave"
 	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/firebase/genkit/go/plugins/vertexai"
+	"github.com/omniaura/mapcache"
 	"google.golang.org/api/customsearch/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
@@ -61,7 +62,7 @@ func main() {
 	if err := secr.Setup(bgCtx); err != nil {
 		log.Fatalf("failed to initialize secrets: %s", err)
 	}
-	if err := db.Setup(bgCtx, &shutdownWG, db.ModeReplica); err != nil {
+	if err := db.Setup(bgCtx, &shutdownWG, db.ModeCloud); err != nil {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
 	stripe.Setup()
@@ -357,6 +358,11 @@ func main() {
 	})
 
 	// - MARK: presign-url
+	const presignTTL = 24 * time.Hour
+	urlCache, _ := mapcache.New[string, string](
+		mapcache.WithTTL(presignTTL/2),
+		mapcache.WithCleanup(bgCtx, presignTTL),
+	)
 	mux.HandleFunc("POST /v1/presign-url", func(w http.ResponseWriter, r *http.Request) {
 		tok, err := auth.VerifyToken(r)
 		if err != nil {
@@ -379,26 +385,30 @@ func main() {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		urlParts := strings.Split(bod.URL, "?")
-		if len(urlParts) == 0 {
-			slog.Error("failed to get filename from URL", "url", bod.URL)
-			http.Error(w, "failed to get filename from URL", http.StatusInternalServerError)
-			return
-		}
-		if bod.Folder == "" {
-			bod.Folder = "generated-images"
-		}
-		// Clean filename
-		filename := strings.TrimPrefix(urlParts[0], envs.DITTO_CONTENT_PREFIX)
-		filename = strings.TrimPrefix(filename, envs.DALL_E_PREFIX)
-		filename = strings.TrimPrefix(filename, bod.UserID+"/")
-		filename = strings.TrimPrefix(filename, bod.Folder+"/")
-		key := fmt.Sprintf("%s/%s/%s", bod.UserID, bod.Folder, filename)
-		objReq, _ := s3Client.GetObjectRequest(&s3.GetObjectInput{
-			Bucket: bucket,
-			Key:    aws.String(key),
+		url, err := urlCache.Get(bod.URL, func() (string, error) {
+			urlParts := strings.Split(bod.URL, "?")
+			if len(urlParts) == 0 {
+				return "", fmt.Errorf("failed to get filename from URL: %s", bod.URL)
+			}
+			if bod.Folder == "" {
+				bod.Folder = "generated-images"
+			}
+			// Clean filename
+			filename := strings.TrimPrefix(urlParts[0], envs.DITTO_CONTENT_PREFIX)
+			filename = strings.TrimPrefix(filename, envs.DALL_E_PREFIX)
+			filename = strings.TrimPrefix(filename, bod.UserID+"/")
+			filename = strings.TrimPrefix(filename, bod.Folder+"/")
+			key := fmt.Sprintf("%s/%s/%s", bod.UserID, bod.Folder, filename)
+			objReq, _ := s3Client.GetObjectRequest(&s3.GetObjectInput{
+				Bucket: bucket,
+				Key:    aws.String(key),
+			})
+			url, err := objReq.Presign(presignTTL)
+			if err != nil {
+				return "", fmt.Errorf("failed to generate presigned URL: %s", err)
+			}
+			return url, nil
 		})
-		url, err := objReq.Presign(24 * time.Hour)
 		if err != nil {
 			slog.Error("failed to generate presigned URL", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -526,7 +536,6 @@ func main() {
 				slog.Error("failed to insert receipt", "error", err)
 			}
 		}()
-		slog.Debug("generated image", "url", url)
 	})
 
 	// - MARK: search-examples
