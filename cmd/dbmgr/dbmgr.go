@@ -38,6 +38,7 @@ const (
 	ModeFirestore
 	ModeSyncBalance
 	ModeSetBalance
+	ModeGetConvs
 )
 
 func main() {
@@ -129,7 +130,7 @@ func main() {
 
 	case "sync":
 		if globalFlags.NArg() < 2 {
-			log.Fatalf("usage: dbmgr [-env <environment>] sync <sync_type>")
+			log.Fatal("usage: dbmgr [-env <environment>] sync <sync_type>")
 		}
 		switch globalFlags.Arg(1) {
 		case "bals":
@@ -142,7 +143,7 @@ func main() {
 		mode = ModeSetBalance
 		setbalFlags := flag.NewFlagSet("setbal", flag.ExitOnError)
 		setbalFlags.Usage = func() {
-			fmt.Fprintf(os.Stderr, "usage: dbmgr [-env <environment>] setbal <uid> <balance>\n")
+			fmt.Fprint(os.Stderr, "usage: dbmgr [-env <environment>] setbal <uid> <balance>\n")
 		}
 		setbalFlags.Parse(globalFlags.Args()[1:])
 		if setbalFlags.NArg() != 2 {
@@ -154,6 +155,18 @@ func main() {
 		if err != nil {
 			log.Fatalf("invalid balance: %s", err)
 		}
+	case "getconvs":
+		mode = ModeGetConvs
+		getConvsFlags := flag.NewFlagSet("getconvs", flag.ExitOnError)
+		getConvsFlags.Usage = func() {
+			fmt.Fprint(os.Stderr, "usage: dbmgr [-env <environment>] getconvs <uid>\n")
+		}
+		getConvsFlags.Parse(globalFlags.Args()[1:])
+		if getConvsFlags.NArg() != 1 {
+			getConvsFlags.Usage()
+			os.Exit(1)
+		}
+		userID = getConvsFlags.Arg(0)
 
 	default:
 		log.Fatalf("unknown command: %s", subcommand)
