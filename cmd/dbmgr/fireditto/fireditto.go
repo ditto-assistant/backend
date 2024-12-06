@@ -5,6 +5,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"strings"
+
+	"cloud.google.com/go/firestore"
 )
 
 type Mode string
@@ -42,6 +45,20 @@ type Command struct {
 	Operation CrudOperation
 	Email     string
 	UID       string
+	Offset    int
+	Limit     int
+	order     string
+}
+
+func (f *Command) Order() firestore.Direction {
+	switch strings.ToLower(f.order) {
+	case "asc":
+		return firestore.Asc
+	case "desc":
+		return firestore.Desc
+	default:
+		return firestore.Asc
+	}
 }
 
 func (f *Command) Parse(args []string) error {
@@ -60,6 +77,9 @@ func (f *Command) Parse(args []string) error {
 	firestoreFlags := flag.NewFlagSet("firestore", flag.ExitOnError)
 	firestoreFlags.StringVar(&f.UID, "uid", "", "user ID")
 	firestoreFlags.StringVar(&f.Email, "email", "", "user email")
+	firestoreFlags.IntVar(&f.Offset, "offset", 0, "offset")
+	firestoreFlags.IntVar(&f.Limit, "limit", 100, "limit")
+	firestoreFlags.StringVar(&f.order, "order", "asc", "order")
 	firestoreFlags.Parse(args[2:])
 	if err := f.Validate(); err != nil {
 		return fmt.Errorf("invalid firebase flags: %s", err)
@@ -86,7 +106,7 @@ func (f *Command) Handle(ctx context.Context) error {
 func (f *Command) HandleUser(ctx context.Context) error {
 	switch f.Operation {
 	case SubtypeUserGet:
-		return PrintUser(ctx, f.Email, f.UID)
+		return f.PrintUser(ctx)
 	default:
 		return fmt.Errorf("unknown operation: %s", f.Operation)
 	}
