@@ -118,7 +118,9 @@ func main() {
 
 		var rsp llm.StreamResponse
 		switch bod.Model {
-		case llm.ModelClaude35Sonnet:
+		case
+			llm.ModelClaude35Sonnet,
+			llm.ModelClaude3Haiku:
 			err = claude.Prompt(ctx, bod, &rsp)
 			if err != nil {
 				slog.Error("failed to prompt Claude", "error", err)
