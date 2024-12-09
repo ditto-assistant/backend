@@ -18,6 +18,7 @@ import (
 	firebase "firebase.google.com/go/v4"
 	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/cfg/secr"
+	"github.com/ditto-assistant/backend/cmd/dbmgr/fireditto"
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/db/users"
 	"github.com/ditto-assistant/backend/pkg/llm"
@@ -35,9 +36,10 @@ const (
 	ModeRollback
 	ModeSearch
 	ModeIngest
-	ModeFirestore
+	ModeFirebase
 	ModeSyncBalance
 	ModeSetBalance
+	ModeGetConvs
 )
 
 func main() {
@@ -83,6 +85,7 @@ func main() {
 	// Parse subcommand flags
 	var version string
 	var userBalance int64
+	var firebaseFlags fireditto.Command
 	switch subcommand {
 	case "migrate":
 		mode = ModeMigrate
@@ -121,15 +124,15 @@ func main() {
 		query = strings.Join(searchFlags.Args(), " ")
 		slog.Debug("search mode", "query", query, "env", dittoEnv)
 
-	case "firestore":
-		mode = ModeFirestore
-		firestoreFlags := flag.NewFlagSet("firestore", flag.ExitOnError)
-		firestoreFlags.StringVar(&userID, "uid", "", "user ID")
-		firestoreFlags.Parse(globalFlags.Args()[1:])
+	case "firebase":
+		mode = ModeFirebase
+		if err := firebaseFlags.Parse(globalFlags.Args()[1:]); err != nil {
+			log.Fatalf("invalid firebase flags: %s", err)
+		}
 
 	case "sync":
 		if globalFlags.NArg() < 2 {
-			log.Fatalf("usage: dbmgr [-env <environment>] sync <sync_type>")
+			log.Fatal("usage: dbmgr [-env <environment>] sync <sync_type>")
 		}
 		switch globalFlags.Arg(1) {
 		case "bals":
@@ -142,7 +145,7 @@ func main() {
 		mode = ModeSetBalance
 		setbalFlags := flag.NewFlagSet("setbal", flag.ExitOnError)
 		setbalFlags.Usage = func() {
-			fmt.Fprintf(os.Stderr, "usage: dbmgr [-env <environment>] setbal <uid> <balance>\n")
+			fmt.Fprint(os.Stderr, "usage: dbmgr [-env <environment>] setbal <uid> <balance>\n")
 		}
 		setbalFlags.Parse(globalFlags.Args()[1:])
 		if setbalFlags.NArg() != 2 {
@@ -154,6 +157,18 @@ func main() {
 		if err != nil {
 			log.Fatalf("invalid balance: %s", err)
 		}
+	case "getconvs":
+		mode = ModeGetConvs
+		getConvsFlags := flag.NewFlagSet("getconvs", flag.ExitOnError)
+		getConvsFlags.Usage = func() {
+			fmt.Fprint(os.Stderr, "usage: dbmgr [-env <environment>] getconvs <uid>\n")
+		}
+		getConvsFlags.Parse(globalFlags.Args()[1:])
+		if getConvsFlags.NArg() != 1 {
+			getConvsFlags.Usage()
+			os.Exit(1)
+		}
+		userID = getConvsFlags.Arg(0)
 
 	default:
 		log.Fatalf("unknown command: %s", subcommand)
@@ -183,9 +198,9 @@ func main() {
 		if err := testSearch(ctx, query); err != nil {
 			log.Fatalf("failed to test search: %s", err)
 		}
-	case ModeFirestore:
-		if err := firestorePrintUser(ctx, userID); err != nil {
-			log.Fatalf("failed to test firestore: %s", err)
+	case ModeFirebase:
+		if err := firebaseFlags.Handle(ctx); err != nil {
+			log.Fatalf("failed to handle firebase: %s", err)
 		}
 	case ModeSyncBalance:
 		if err := syncBalance(ctx); err != nil {
@@ -242,56 +257,6 @@ func syncBalance(ctx context.Context) error {
 			"user_tokens", numfmt.LargeNumber(newBalance),
 		)
 	}
-
-	return nil
-}
-
-// - MARK: Print Balance
-
-func firestorePrintUser(ctx context.Context, userID string) error {
-	app, err := firebase.NewApp(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("error creating firebase app: %w", err)
-	}
-	firestore, err := app.Firestore(ctx)
-	if err != nil {
-		return fmt.Errorf("error getting firestore client: %w", err)
-	}
-
-	// getBalanceFromFirestore retrieves the balance for a given user ID from Firestore
-	// It returns the balance as a float64, or false if the user doesn't exist or an error occurs
-	balanceRef := firestore.Collection("users").Doc(userID).Collection("balance")
-	docs, err := balanceRef.Documents(ctx).GetAll()
-	if err != nil {
-		slog.Error("Error getting documents from Firestore users collection", "error", err)
-		return fmt.Errorf("error getting documents from Firestore: %w", err)
-	}
-
-	if len(docs) == 0 {
-		slog.Info("User doesn't exist in Firestore", "userID", userID)
-		return nil
-	}
-
-	userDoc := docs[0]
-	var userData struct {
-		Balance float64 `firestore:"balance"`
-	}
-	if err := userDoc.DataTo(&userData); err != nil {
-		slog.Error("Error unmarshaling Firestore document", "error", err)
-		return fmt.Errorf("error unmarshaling Firestore document: %w", err)
-	}
-
-	if userData.Balance != 0 {
-		slog.Info("Retrieved user balance from Firestore", "userID", userID, "balance", userData.Balance)
-	} else {
-		slog.Info("User balance not found or zero", "userID", userID)
-	}
-	count, err := db.GetDittoTokensPerDollar(ctx)
-	if err != nil {
-		return fmt.Errorf("error getting ditto tokens per dollar: %w", err)
-	}
-	newBalance := int64(userData.Balance * float64(count))
-	slog.Info("User tokens", "ditto per dollar", count, "user_dollars", userData.Balance, "user_tokens", numfmt.LargeNumber(newBalance))
 
 	return nil
 }

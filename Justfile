@@ -18,6 +18,9 @@ kill:
 db *ARGS:
 	go run cmd/dbmgr/dbmgr.go {{ARGS}}
 
+install-dbmgr:
+	go install cmd/dbmgr/dbmgr.go
+
 search *ARGS:
 	go run cmd/dbmgr/dbmgr.go search {{ARGS}}
 
