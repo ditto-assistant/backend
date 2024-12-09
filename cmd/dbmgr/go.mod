@@ -7,7 +7,7 @@ require (
 	github.com/ditto-assistant/backend v0.0.4
 	github.com/firebase/genkit/go v0.2.1
 	github.com/tursodatabase/go-libsql v0.0.0-20241011135853-3effbb6dea5c
-	golang.org/x/sync v0.9.0
+	golang.org/x/sync v0.10.0
 )
 
 require (
