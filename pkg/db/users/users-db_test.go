@@ -1,4 +1,4 @@
-package db_test
+package users_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 
 	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/pkg/db"
+	"github.com/ditto-assistant/backend/pkg/db/users"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,12 +20,12 @@ func TestUserBalanceUpdateTrigger(t *testing.T) {
 	defer cancel()
 	envs.DITTO_ENV = envs.EnvLocal
 	envs.Load()
-	err := db.Setup(ctx, &shutdown)
+	err := db.Setup(ctx, &shutdown, db.ModeCloud)
 	require.NoError(t, err, "Failed to set up database")
 
 	// Create a new user
-	user := db.User{UID: "test@example.com"}
-	err = user.GetByUID(ctx)
+	user := users.User{UID: "test@example.com"}
+	err = user.Get(ctx)
 	require.NoError(t, err, "Failed to create user")
 
 	// Set the user's balance to 10,000

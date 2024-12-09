@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,13 +12,21 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/cfg/secr"
+	"github.com/ditto-assistant/backend/pkg/api/accounts"
 	"github.com/ditto-assistant/backend/pkg/api/stripe"
 	"github.com/ditto-assistant/backend/pkg/db"
+	"github.com/ditto-assistant/backend/pkg/db/users"
 	"github.com/ditto-assistant/backend/pkg/fbase"
 	"github.com/ditto-assistant/backend/pkg/llm"
 	"github.com/ditto-assistant/backend/pkg/llm/claude"
@@ -28,12 +35,13 @@ import (
 	"github.com/ditto-assistant/backend/pkg/llm/llama"
 	"github.com/ditto-assistant/backend/pkg/llm/mistral"
 	"github.com/ditto-assistant/backend/pkg/llm/openai"
+	"github.com/ditto-assistant/backend/pkg/llm/openai/dalle"
+	"github.com/ditto-assistant/backend/pkg/llm/openai/gpt"
 	"github.com/ditto-assistant/backend/pkg/middleware"
-	"github.com/ditto-assistant/backend/pkg/numfmt"
 	"github.com/ditto-assistant/backend/pkg/search/brave"
-	"github.com/ditto-assistant/backend/types/rp"
 	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/firebase/genkit/go/plugins/vertexai"
+	"github.com/omniaura/mapcache"
 	"google.golang.org/api/customsearch/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
@@ -45,7 +53,6 @@ func main() {
 	var shutdownWG sync.WaitGroup
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGINT)
-
 	if err := vertexai.Init(bgCtx, &vertexai.Config{
 		ProjectID: "ditto-app-dev",
 		Location:  "us-central1",
@@ -55,20 +62,30 @@ func main() {
 	if err := secr.Setup(bgCtx); err != nil {
 		log.Fatalf("failed to initialize secrets: %s", err)
 	}
-	if err := db.Setup(bgCtx, &shutdownWG); err != nil {
+	if err := db.Setup(bgCtx, &shutdownWG, db.ModeCloud); err != nil {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
 	stripe.Setup()
-	fbAuth, err := fbase.NewAuth(bgCtx)
+	auth, err := fbase.NewAuth(bgCtx)
 	if err != nil {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
-	corsMiddleware := middleware.NewCors()
 	mux := http.NewServeMux()
+	bucket := aws.String(envs.DITTO_CONTENT_BUCKET)
+	s3Config := &aws.Config{
+		Credentials: credentials.NewStaticCredentials(envs.BACKBLAZE_KEY_ID, secr.BACKBLAZE_API_KEY.String(), ""),
+		Region:      aws.String(envs.DITTO_CONTENT_REGION),
+		Endpoint:    aws.String(envs.DITTO_CONTENT_ENDPOINT),
+	}
+	mySession, err := session.NewSession(s3Config)
+	if err != nil {
+		log.Fatalf("failed to create session: %v", err)
+	}
+	s3Client := s3.New(mySession)
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := fbAuth.VerifyToken(r)
+		tok, err := auth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -85,14 +102,15 @@ func main() {
 		}
 		slog := slog.With("user_id", bod.UserID, "model", bod.Model)
 		slog.Debug("Prompt Request")
-		user := db.User{UID: bod.UserID}
+		user := users.User{UID: bod.UserID}
 		ctx := r.Context()
-		if err := user.GetByUID(ctx); err != nil {
+		if err := user.Get(ctx); err != nil {
 			slog.Error("failed to get user", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if user.Balance <= 0 {
+		// llama32 is free
+		if user.Balance <= 0 && bod.Model != llm.ModelLlama32 {
 			slog.Error("user balance is 0", "balance", user.Balance)
 			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 			return
@@ -138,6 +156,17 @@ func main() {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+		case
+			llm.ModelO1Mini, llm.ModelO1Mini20240912,
+			llm.ModelO1Preview, llm.ModelO1Preview20240912,
+			llm.ModelGPT4oMini, llm.ModelGPT4oMini20240718,
+			llm.ModelGPT4o, llm.ModelGPT4o1120:
+			err = gpt.Prompt(ctx, bod, &rsp)
+			if err != nil {
+				slog.Error("failed to prompt "+bod.Model.String(), "error", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		default:
 			slog.Info("unsupported model", "model", bod.Model)
 			http.Error(w, fmt.Sprintf("unsupported model: %s", bod.Model), http.StatusBadRequest)
@@ -171,7 +200,7 @@ func main() {
 
 	// - MARK: embed
 	mux.HandleFunc("POST /v1/embed", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := fbAuth.VerifyToken(r)
+		tok, err := auth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -187,14 +216,10 @@ func main() {
 			return
 
 		}
-		user := db.User{UID: bod.UserID}
+		user := users.User{UID: bod.UserID}
 		ctx := r.Context()
-		if err := user.GetByUID(ctx); err != nil {
+		if err := user.Get(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if user.Balance <= 0 {
-			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 			return
 		}
 
@@ -238,7 +263,7 @@ func main() {
 	}
 	// - MARK: google-search
 	mux.HandleFunc("POST /v1/google-search", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := fbAuth.VerifyToken(r)
+		tok, err := auth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -260,9 +285,9 @@ func main() {
 		if bod.NumResults == 0 {
 			bod.NumResults = 5
 		}
-		user := db.User{UID: bod.UserID}
+		user := users.User{UID: bod.UserID}
 		ctx := r.Context()
-		if err := user.GetByUID(ctx); err != nil {
+		if err := user.Get(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -329,9 +354,102 @@ func main() {
 		}()
 	})
 
+	// - MARK: presign-url
+	const presignTTL = 24 * time.Hour
+	urlCache, _ := mapcache.New[string, string](
+		mapcache.WithTTL(presignTTL/2),
+		mapcache.WithCleanup(bgCtx, presignTTL),
+	)
+	mux.HandleFunc("POST /v1/presign-url", func(w http.ResponseWriter, r *http.Request) {
+		tok, err := auth.VerifyToken(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		var bod rq.PresignedURLV1
+		if err := json.Unmarshal(body, &bod); err != nil {
+			slog.Error("failed to decode request body", "error", err, "body", string(body), "path", r.URL.Path)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		err = tok.Check(bod)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		url, err := urlCache.Get(bod.URL, func() (string, error) {
+			urlParts := strings.Split(bod.URL, "?")
+			if len(urlParts) == 0 {
+				return "", fmt.Errorf("failed to get filename from URL: %s", bod.URL)
+			}
+			if bod.Folder == "" {
+				bod.Folder = "generated-images"
+			}
+			// Clean filename
+			filename := strings.TrimPrefix(urlParts[0], envs.DITTO_CONTENT_PREFIX)
+			filename = strings.TrimPrefix(filename, envs.DALL_E_PREFIX)
+			filename = strings.TrimPrefix(filename, bod.UserID+"/")
+			filename = strings.TrimPrefix(filename, bod.Folder+"/")
+			key := fmt.Sprintf("%s/%s/%s", bod.UserID, bod.Folder, filename)
+			objReq, _ := s3Client.GetObjectRequest(&s3.GetObjectInput{
+				Bucket: bucket,
+				Key:    aws.String(key),
+			})
+			url, err := objReq.Presign(presignTTL)
+			if err != nil {
+				return "", fmt.Errorf("failed to generate presigned URL: %s", err)
+			}
+			return url, nil
+		})
+		if err != nil {
+			slog.Error("failed to generate presigned URL", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintln(w, url)
+	})
+
+	// - MARK: create-upload-url
+	mux.HandleFunc("POST /v1/create-upload-url", func(w http.ResponseWriter, r *http.Request) {
+		tok, err := auth.VerifyToken(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var bod rq.CreateUploadURLV1
+		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		err = tok.Check(bod)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		key := fmt.Sprintf("%s/uploads/%d", bod.UserID, time.Now().UnixNano())
+		req, _ := s3Client.PutObjectRequest(&s3.PutObjectInput{
+			Bucket: bucket,
+			Key:    aws.String(key),
+		})
+		url, err := req.Presign(15 * time.Minute)
+		slog.Debug("created upload URL", "url", url)
+		if err != nil {
+			slog.Error("failed to generate upload URL", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintln(w, url)
+	})
+
+	dalleClient := dalle.NewClient(secr.OPENAI_DALLE_API_KEY.String(), llm.HttpClient)
 	// - MARK: generate-image
 	mux.HandleFunc("POST /v1/generate-image", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := fbAuth.VerifyToken(r)
+		tok, err := auth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -346,12 +464,11 @@ func main() {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		if bod.Model == "" {
-			bod.Model = llm.ModelDalle3
-		}
-		user := db.User{UID: bod.UserID}
+		user := users.User{UID: bod.UserID}
 		ctx := r.Context()
-		if err := user.GetByUID(ctx); err != nil {
+		slog := slog.With("user_id", bod.UserID, "model", bod.Model)
+		if err := user.Get(ctx); err != nil {
+			slog.Error("failed to get user", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -359,67 +476,54 @@ func main() {
 			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 			return
 		}
-
-		type RequestImageOpenAI struct {
-			Prompt string          `json:"prompt"`
-			Model  llm.ServiceName `json:"model"`
-			N      int             `json:"n"`
-			Size   string          `json:"size"`
-		}
-		var buf bytes.Buffer
-		if err := json.NewEncoder(&buf).Encode(RequestImageOpenAI{
-			Prompt: bod.Prompt,
-			Model:  bod.Model,
-			N:      1,
-			Size:   "1024x1024",
-		}); err != nil {
-			slog.Error("failed to encode image request", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		req, err := http.NewRequestWithContext(ctx, "POST", "https://api.openai.com/v1/images/generations", &buf)
+		url, err := dalleClient.Prompt(ctx, &bod)
 		if err != nil {
-			slog.Error("failed to create image request", "error", err)
+			slog.Error("failed to generate image", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+secr.OPENAI_DALLE_API_KEY.String())
-		resp, err := llm.HttpClient.Do(req)
-		if err != nil {
-			slog.Error("failed to send image request", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			slog.Error("failed to generate image", "status", resp.Status, "status code", resp.StatusCode)
-			http.Error(w, fmt.Sprintf("failed to generate image: %s", resp.Status), resp.StatusCode)
-			return
-		}
-		var respBody struct {
-			Data []struct {
-				URL string `json:"url"`
-			} `json:"data"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
-			slog.Error("failed to decode image response", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if len(respBody.Data) == 0 {
-			slog.Error("no image URL returned")
-			http.Error(w, "no image URL returned", http.StatusInternalServerError)
-			return
-		}
-		fmt.Fprintln(w, respBody.Data[0].URL)
+		fmt.Fprintln(w, url)
+		slog.Debug("generated image", "url", url)
 
 		shutdownWG.Add(1)
 		go func() {
 			defer shutdownWG.Done()
 			ctx, cancel := context.WithTimeout(bgCtx, 15*time.Second)
 			defer cancel()
+			req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+			if err != nil {
+				slog.Error("failed to create image request", "error", err)
+				return
+			}
+			imgResp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				slog.Error("failed to download image", "error", err)
+				return
+			}
+			defer imgResp.Body.Close()
+			imgData, err := io.ReadAll(imgResp.Body)
+			if err != nil {
+				slog.Error("failed to read image data", "error", err)
+				return
+			}
+			urlParts := strings.Split(url, "?")
+			if len(urlParts) == 0 {
+				slog.Error("failed to get filename from URL", "url", url)
+				return
+			}
+			filename := strings.TrimPrefix(urlParts[0], envs.DALL_E_PREFIX)
+			key := fmt.Sprintf("%s/generated-images/%s", bod.UserID, filename)
+			put, err := s3Client.PutObject(&s3.PutObjectInput{
+				Bucket: bucket,
+				Key:    aws.String(key),
+				Body:   bytes.NewReader(imgData),
+			})
+			if err != nil {
+				slog.Error("failed to copy to S3", "error", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			slog.Debug("uploaded image to S3", "key", put.String())
 			receipt := db.Receipt{
 				UserID:      user.ID,
 				NumImages:   1,
@@ -429,12 +533,11 @@ func main() {
 				slog.Error("failed to insert receipt", "error", err)
 			}
 		}()
-		slog.Debug("generated image", "url", respBody.Data[0].URL)
 	})
 
 	// - MARK: search-examples
 	mux.HandleFunc("POST /v1/search-examples", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := fbAuth.VerifyToken(r)
+		tok, err := auth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -465,103 +568,13 @@ func main() {
 		}
 	})
 
-	// Aidrop tokens every 24 hours when the user logs in
-	const airdropTokens = 20_000_000
-	// - MARK: balance
-	mux.HandleFunc("GET /v1/balance", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := fbAuth.VerifyToken(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		var bod rq.BalanceV1
-		if err := bod.FromQuery(r); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		err = tok.Check(bod)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		var q1 struct {
-			ID            int64
-			LastAirdropAt sql.NullTime
-		}
-		ctx := r.Context()
-		err = db.D.QueryRowContext(ctx, `
-			SELECT id, last_airdrop_at FROM users WHERE uid = ?
-		`, bod.UserID).Scan(&q1.ID, &q1.LastAirdropAt)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				user := db.User{
-					UID:                bod.UserID,
-					Balance:            airdropTokens,
-					TotalTokensAirdrop: airdropTokens,
-				}
-				if err := user.Insert(ctx); err != nil {
-					slog.Error("failed to insert user", "uid", bod.UserID, "error", err)
-					http.Error(w, err.Error(), http.StatusInternalServerError)
-					return
-				}
-			} else {
-				slog.Error("failed to get user", "uid", bod.UserID, "error", err)
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
-		if !q1.LastAirdropAt.Valid || time.Since(q1.LastAirdropAt.Time) > 24*time.Hour {
-			_, err = db.D.ExecContext(ctx, `
-				UPDATE users SET
-					balance = balance + ?,
-					total_tokens_airdropped = total_tokens_airdropped + ?,
-					last_airdrop_at = CURRENT_TIMESTAMP
-				WHERE id = ?
-			`, airdropTokens, airdropTokens, q1.ID)
-			if err != nil {
-				slog.Error("failed to airdrop tokens", "uid", bod.UserID, "error", err)
-			}
-			slog.Info("airdropped tokens", "uid", bod.UserID, "tokens", airdropTokens)
-		}
-
-		var q struct {
-			Balance  int64
-			Images   float64
-			Searches float64
-			Dollars  float64
-		}
-		err = db.D.QueryRowContext(ctx, `
-			SELECT users.balance,
-				   CAST(users.balance AS FLOAT) / (SELECT CAST(count AS FLOAT) FROM tokens_per_unit WHERE name = 'dollar'),
-				   (users.balance / (SELECT count FROM tokens_per_unit WHERE name = 'image')),
-				   (users.balance / (SELECT count FROM tokens_per_unit WHERE name = 'search'))
-			FROM users
-			WHERE id = ?`, q1.ID).
-			Scan(&q.Balance, &q.Dollars, &q.Images, &q.Searches)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				slog.Warn("user not found, 0 balance", "uid", bod.UserID)
-				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(rp.BalanceV1{}.Zeroes())
-				return
-			}
-			slog.Error("failed to get balance", "uid", bod.UserID, "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		var rsp rp.BalanceV1
-		rsp.Balance = numfmt.LargeNumber(q.Balance)
-		rsp.USD = numfmt.USD(q.Dollars)
-		rsp.Images = numfmt.LargeNumber(int64(q.Images))
-		rsp.Searches = numfmt.LargeNumber(int64(q.Searches))
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(rsp)
-	})
+	mux.HandleFunc("GET /v1/balance", accounts.GetBalanceV1)
 
 	// - MARK: stripe
 	mux.HandleFunc("POST /v1/stripe/checkout-session", stripe.CreateCheckoutSession)
 	mux.HandleFunc("POST /v1/stripe/webhook", stripe.HandleWebhook)
 
+	corsMiddleware := middleware.NewCors()
 	handler := corsMiddleware.Handler(mux)
 	server := &http.Server{
 		Addr:    ":3400",

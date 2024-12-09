@@ -8,6 +8,7 @@ func NewCors() *cors.Cors {
 			"http://localhost:3000",
 			"http://localhost:4173",
 			"https://assistant.heyditto.ai",
+			"https://heyditto.ai",
 			"https://ditto-app-dev.web.app",
 			"https://ditto-app-dev-*.web.app",
 		},

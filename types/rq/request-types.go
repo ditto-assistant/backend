@@ -48,6 +48,16 @@ type GenerateImageV1 struct {
 	UserID string          `json:"userID"`
 	Prompt string          `json:"prompt"`
 	Model  llm.ServiceName `json:"model"`
+
+	// DALL-E specific fields
+	Size string `json:"size,omitempty"`
+
+	// FLUX specific fields
+	Width            int    `json:"width,omitempty"`
+	Height           int    `json:"height,omitempty"`
+	PromptUpsampling string `json:"promptUpsampling,omitempty"`
+	Seed             int    `json:"seed,omitempty"`
+	SafetyTolerance  int    `json:"safetyTolerance,omitempty"`
 }
 
 func (g GenerateImageV1) GetUserID() string { return g.UserID }
@@ -62,6 +72,7 @@ func (s SearchExamplesV1) GetUserID() string { return s.UserID }
 
 type BalanceV1 struct {
 	UserID string `json:"userID"`
+	Email  string `json:"email"`
 }
 
 func (b BalanceV1) GetUserID() string { return b.UserID }
@@ -72,5 +83,20 @@ func (b *BalanceV1) FromQuery(r *http.Request) error {
 		return errors.New("userID is required")
 	}
 	b.UserID = uid
+	b.Email = r.URL.Query().Get("email")
 	return nil
 }
+
+type PresignedURLV1 struct {
+	UserID string `json:"userID"`
+	URL    string `json:"url"`
+	Folder string `json:"folder"`
+}
+
+func (p PresignedURLV1) GetUserID() string { return p.UserID }
+
+type CreateUploadURLV1 struct {
+	UserID string `json:"userID"`
+}
+
+func (c CreateUploadURLV1) GetUserID() string { return c.UserID }

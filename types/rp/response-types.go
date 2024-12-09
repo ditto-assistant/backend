@@ -1,16 +1,27 @@
 package rp
 
 type BalanceV1 struct {
-	Balance  string `json:"balance"`
-	USD      string `json:"usd"`
-	Images   string `json:"images"`
-	Searches string `json:"searches"`
+	BalanceRaw         int64  `json:"balanceRaw"`
+	Balance            string `json:"balance"`
+	USD                string `json:"usd"`
+	Images             string `json:"images"`
+	ImagesRaw          int64  `json:"imagesRaw"`
+	Searches           string `json:"searches"`
+	SearchesRaw        int64  `json:"searchesRaw"`
+	DropAmountRaw      int64  `json:"dropAmountRaw,omitempty"`
+	DropAmount         string `json:"dropAmount,omitempty"`
+	TotalAirdroppedRaw int64  `json:"totalAirdroppedRaw,omitempty"`
+	TotalAirdropped    string `json:"totalAirdropped,omitempty"`
 }
 
 func (BalanceV1) Zeroes() BalanceV1 {
 	return BalanceV1{
-		Balance:  "0",
-		Images:   "0",
-		Searches: "0",
+		Balance:     "0",
+		BalanceRaw:  0,
+		Images:      "0",
+		ImagesRaw:   0,
+		Searches:    "0",
+		SearchesRaw: 0,
+		USD:         "$0.00",
 	}
 }

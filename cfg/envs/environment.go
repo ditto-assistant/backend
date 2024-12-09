@@ -15,15 +15,21 @@ var fs embed.FS
 
 // Environment Variables
 var (
-	PROJECT_ID           string
-	DITTO_ENV            Env
-	DB_URL_DITTO         string
-	GCLOUD_PROJECT       string
-	PRICE_ID_TOKENS_1B   string
-	PRICE_ID_TOKENS_11B  string
-	PRICE_ID_TOKENS_30B  string
-	PRICE_ID_TOKENS_100B string
-	PRICE_ID_TOKENS_150B string
+	BACKBLAZE_KEY_ID       string
+	PROJECT_ID             string
+	DALL_E_PREFIX          string
+	DITTO_ENV              Env
+	DITTO_CONTENT_ENDPOINT string
+	DITTO_CONTENT_REGION   string
+	DITTO_CONTENT_BUCKET   string
+	DITTO_CONTENT_PREFIX   string
+	DB_URL_DITTO           string
+	GCLOUD_PROJECT         string
+	PRICE_ID_TOKENS_1B     string
+	PRICE_ID_TOKENS_11B    string
+	PRICE_ID_TOKENS_30B    string
+	PRICE_ID_TOKENS_100B   string
+	PRICE_ID_TOKENS_150B   string
 )
 
 type Env string
@@ -90,10 +96,23 @@ func Load() error {
 		if err != nil {
 			return err
 		}
-
+		// check if .env.common exists
+		if _, err := fs.Open(".env.common"); err == nil {
+			slog.Info("Loading common environment variables")
+			err := EnvFile(".env.common").Load()
+			if err != nil {
+				return err
+			}
+		}
 	}
 	envs := []envLookup{
+		{&BACKBLAZE_KEY_ID, "BACKBLAZE_KEY_ID"},
 		{&PROJECT_ID, "PROJECT_ID"},
+		{&DALL_E_PREFIX, "DALL_E_PREFIX"},
+		{&DITTO_CONTENT_ENDPOINT, "DITTO_CONTENT_ENDPOINT"},
+		{&DITTO_CONTENT_REGION, "DITTO_CONTENT_REGION"},
+		{&DITTO_CONTENT_BUCKET, "DITTO_CONTENT_BUCKET"},
+		{&DITTO_CONTENT_PREFIX, "DITTO_CONTENT_PREFIX"},
 		{&DB_URL_DITTO, "DB_URL_DITTO"},
 		{&GCLOUD_PROJECT, "GCLOUD_PROJECT"},
 		{&PRICE_ID_TOKENS_1B, "PRICE_ID_TOKENS_1B"},

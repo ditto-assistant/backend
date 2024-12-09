@@ -16,9 +16,11 @@ type SecretID string
 
 // Secrets
 var (
+	BACKBLAZE_API_KEY         SecretID
 	BRAVE_SEARCH_API_KEY      SecretID
 	SEARCH_API_KEY            SecretID
 	OPENAI_DALLE_API_KEY      SecretID
+	OPENAI_LLM_API_KEY        SecretID
 	OPENAI_EMBEDDINGS_API_KEY SecretID
 	LIBSQL_ENCRYPTION_KEY     SecretID
 	TURSO_AUTH_TOKEN          SecretID
@@ -65,11 +67,13 @@ func Setup(ctx context.Context) error {
 		return fmt.Errorf("failed to load environment variables: %w", err)
 	}
 	group, ctx := errgroup.WithContext(ctx)
+	BACKBLAZE_API_KEY.fetch(ctx, group, sm, "BACKBLAZE_API_KEY")
 	BRAVE_SEARCH_API_KEY.fetch(ctx, group, sm, "BRAVE_SEARCH_API_KEY")
 	SEARCH_API_KEY.fetch(ctx, group, sm, "SEARCH_API_KEY")
 	OPENAI_DALLE_API_KEY.fetch(ctx, group, sm, "OPENAI_DALLE_API_KEY")
 	LIBSQL_ENCRYPTION_KEY.fetch(ctx, group, sm, "LIBSQL_ENCRYPTION_KEY")
 	OPENAI_EMBEDDINGS_API_KEY.fetch(ctx, group, sm, "OPENAI_EMBEDDINGS_API_KEY")
+	OPENAI_LLM_API_KEY.fetch(ctx, group, sm, "OPENAI_LLM_API_KEY")
 	switch envs.DITTO_ENV {
 	case envs.EnvLocal:
 		STRIPE_SECRET_KEY.fetch(ctx, group, sm, "LOCAL_STRIPE_SECRET_KEY")
