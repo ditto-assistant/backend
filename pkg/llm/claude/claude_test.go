@@ -13,7 +13,7 @@ import (
 
 func TestPrompt(t *testing.T) {
 	models := []llm.ServiceName{
-		llm.ModelClaude3Haiku,
+		llm.ModelClaude3Haiku_20240307,
 		llm.ModelClaude35Sonnet,
 	}
 
@@ -58,7 +58,7 @@ func TestLongPrompt(t *testing.T) {
 	}
 
 	models := []llm.ServiceName{
-		llm.ModelClaude3Haiku,
+		llm.ModelClaude3Haiku_20240307,
 		llm.ModelClaude35Sonnet,
 	}
 
@@ -103,7 +103,7 @@ func TestImage(t *testing.T) {
 	}
 
 	models := []llm.ServiceName{
-		llm.ModelClaude3Haiku,
+		llm.ModelClaude3Haiku_20240307,
 		llm.ModelClaude35Sonnet,
 	}
 

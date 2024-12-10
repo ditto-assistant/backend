@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 
 	"github.com/ditto-assistant/backend/cfg/envs"
@@ -18,7 +17,6 @@ import (
 )
 
 const baseURL = "https://us-east5-aiplatform.googleapis.com/v1/projects/%s/locations/us-east5/publishers/anthropic/models/%s:streamRawPredict"
-const ModelClaude35Sonnet20240620 = llm.ModelClaude35Sonnet + "@20240620"
 
 var requestUrl string
 
@@ -62,14 +60,6 @@ type Request struct {
 // event: message_stop
 // data: {"type":"message_stop" }
 
-func init() {
-	err := envs.Load()
-	if err != nil {
-		log.Fatalf("Error loading environment variables: %v", err)
-	}
-	requestUrl = fmt.Sprintf(baseURL, envs.GCLOUD_PROJECT, ModelClaude35Sonnet20240620)
-}
-
 type EvMsgStart struct {
 	Type    string `json:"type"`
 	Message struct {
@@ -99,8 +89,15 @@ type EvMsgDelta struct {
 // TODO: Add Prompt options, such as message array, last message role is assistant, etc.
 
 func Prompt(ctx context.Context, bod rq.PromptV1, rsp *llm.StreamResponse) error {
-	if bod.Model == llm.ModelClaude35Sonnet {
-		bod.Model = ModelClaude35Sonnet20240620
+	switch bod.Model {
+	case llm.ModelClaude3Haiku:
+		bod.Model = llm.ModelClaude3Haiku_20240307
+	case llm.ModelClaude35Haiku:
+		bod.Model = llm.ModelClaude35Haiku_20241022
+	case llm.ModelClaude35Sonnet:
+		bod.Model = llm.ModelClaude35Sonnet_20240620
+	case llm.ModelClaude35SonnetV2:
+		bod.Model = llm.ModelClaude35SonnetV2_20241022
 	}
 	requestUrl = fmt.Sprintf(baseURL, envs.GCLOUD_PROJECT, bod.Model)
 	messages := make([]Message, 0, 1)

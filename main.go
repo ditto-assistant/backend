@@ -119,8 +119,10 @@ func main() {
 		var rsp llm.StreamResponse
 		switch bod.Model {
 		case
-			llm.ModelClaude35Sonnet,
-			llm.ModelClaude3Haiku:
+			llm.ModelClaude3Haiku, llm.ModelClaude3Haiku_20240307,
+			llm.ModelClaude35Sonnet, llm.ModelClaude35Sonnet_20240620,
+			llm.ModelClaude35SonnetV2, llm.ModelClaude35SonnetV2_20241022,
+			llm.ModelClaude35Haiku, llm.ModelClaude35Haiku_20241022:
 			err = claude.Prompt(ctx, bod, &rsp)
 			if err != nil {
 				slog.Error("failed to prompt Claude", "error", err)
@@ -159,10 +161,10 @@ func main() {
 				return
 			}
 		case
-			llm.ModelO1Mini, llm.ModelO1Mini20240912,
-			llm.ModelO1Preview, llm.ModelO1Preview20240912,
-			llm.ModelGPT4oMini, llm.ModelGPT4oMini20240718,
-			llm.ModelGPT4o, llm.ModelGPT4o1120:
+			llm.ModelO1Mini, llm.ModelO1Mini_20240912,
+			llm.ModelO1Preview, llm.ModelO1Preview_20240912,
+			llm.ModelGPT4oMini, llm.ModelGPT4oMini_20240718,
+			llm.ModelGPT4o, llm.ModelGPT4o_1120:
 			err = gpt.Prompt(ctx, bod, &rsp)
 			if err != nil {
 				slog.Error("failed to prompt "+bod.Model.String(), "error", err)
