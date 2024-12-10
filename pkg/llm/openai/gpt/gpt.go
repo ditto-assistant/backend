@@ -338,6 +338,6 @@ func Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) er
 func IsO1Model(m llm.ServiceName) bool {
 	return m == llm.ModelO1Preview ||
 		m == llm.ModelO1Mini ||
-		m == llm.ModelO1Mini20240912 ||
-		m == llm.ModelO1Preview20240912
+		m == llm.ModelO1Mini_20240912 ||
+		m == llm.ModelO1Preview_20240912
 }
