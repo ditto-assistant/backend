@@ -77,14 +77,11 @@ func (f *Command) PrintUser(ctx context.Context) error {
 	return nil
 }
 
-// var reImageLinks = regexp.MustCompile(`!\[(?:image|DittoImage)\]\((.*?)\)`)
-
 func parseImageLinks(text string) []string {
 	const prefixImageAttachment = "![image]("
 	const prefixDittoImageAttachment = "![DittoImage]("
 	const suffixImageAttachment = ")"
 	var links []string
-
 	// Handle ![image]() links
 	remaining := text
 	for {
@@ -101,7 +98,6 @@ func parseImageLinks(text string) []string {
 		links = append(links, afterPrefix[:closeIdx])
 		remaining = afterPrefix[closeIdx:]
 	}
-
 	// Handle ![DittoImage]() links
 	remaining = text
 	for {
@@ -118,6 +114,5 @@ func parseImageLinks(text string) []string {
 		links = append(links, afterPrefix[:closeIdx])
 		remaining = afterPrefix[closeIdx:]
 	}
-
 	return links
 }
