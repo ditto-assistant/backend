@@ -10,7 +10,24 @@ import (
 	"strconv"
 
 	"github.com/ditto-assistant/backend/cfg/secr"
+	"github.com/ditto-assistant/backend/pkg/search"
 )
+
+type Service struct{}
+
+var _ search.Service = (*Service)(nil)
+
+func NewService() *Service {
+	return &Service{}
+}
+
+func (s *Service) Search(ctx context.Context, req search.Request) (results search.Results, err error) {
+	results, err = Search(ctx, req.Query, req.NumResults)
+	if err != nil {
+		return
+	}
+	return results, nil
+}
 
 const basedURL = "https://api.search.brave.com/res/v1/web/search"
 
