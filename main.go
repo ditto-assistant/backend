@@ -97,7 +97,10 @@ func main() {
 		Auth:         auth,
 		SearchClient: searchClient,
 	}
+	mux.HandleFunc("GET /v1/balance", accounts.GetBalanceV1)
 	mux.HandleFunc("POST /v1/google-search", v1Client.HandleSearch)
+	mux.HandleFunc("POST /v1/stripe/checkout-session", stripe.CreateCheckoutSession)
+	mux.HandleFunc("POST /v1/stripe/webhook", stripe.HandleWebhook)
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
@@ -490,12 +493,6 @@ func main() {
 			fmt.Fprintf(w, "User's Prompt: %s\nDitto:\n%s\n\n", example.Prompt, example.Response)
 		}
 	})
-
-	mux.HandleFunc("GET /v1/balance", accounts.GetBalanceV1)
-
-	// - MARK: stripe
-	mux.HandleFunc("POST /v1/stripe/checkout-session", stripe.CreateCheckoutSession)
-	mux.HandleFunc("POST /v1/stripe/webhook", stripe.HandleWebhook)
 
 	corsMiddleware := middleware.NewCors()
 	handler := corsMiddleware.Handler(mux)
