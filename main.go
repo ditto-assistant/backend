@@ -41,8 +41,8 @@ import (
 	"github.com/ditto-assistant/backend/pkg/search"
 	"github.com/ditto-assistant/backend/pkg/search/brave"
 	"github.com/ditto-assistant/backend/pkg/search/google"
+	"github.com/ditto-assistant/backend/pkg/service"
 	"github.com/ditto-assistant/backend/types/rq"
-	"github.com/ditto-assistant/backend/types/ty"
 	"github.com/firebase/genkit/go/plugins/vertexai"
 	"github.com/omniaura/mapcache"
 )
@@ -59,13 +59,13 @@ func main() {
 	}); err != nil {
 		log.Fatal(err)
 	}
-	if err := secr.Setup(bgCtx); err != nil {
+	secrClient, err := secr.Setup(bgCtx)
+	if err != nil {
 		log.Fatalf("failed to initialize secrets: %s", err)
 	}
 	if err := db.Setup(bgCtx, &shutdownWG, db.ModeCloud); err != nil {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
-	stripe.Setup()
 	auth, err := fbase.NewAuth(bgCtx)
 	if err != nil {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
@@ -81,26 +81,25 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create session: %v", err)
 	}
-	svcCtx := ty.ServiceContext{
+	svcCtx := service.Context{
 		Background: bgCtx,
 		ShutdownWG: &shutdownWG,
+		Secr:       secrClient,
 	}
 	s3Client := s3.New(mySession)
-	searchClient, err := search.NewClient(svcCtx,
-		search.WithService(brave.NewService),
-		search.WithService(google.NewService),
+	searchClient := search.NewClient(
+		search.WithService(brave.NewService(svcCtx)),
+		search.WithService(google.NewService(svcCtx)),
 	)
-	if err != nil {
-		log.Fatalf("failed to initialize search client: %v", err)
-	}
 	v1Client := v1.Service{
 		Auth:         auth,
 		SearchClient: searchClient,
 	}
+	stripeClient := stripe.NewClient(svcCtx)
 	mux.HandleFunc("GET /v1/balance", accounts.GetBalanceV1)
 	mux.HandleFunc("POST /v1/google-search", v1Client.HandleSearch)
-	mux.HandleFunc("POST /v1/stripe/checkout-session", stripe.CreateCheckoutSession)
-	mux.HandleFunc("POST /v1/stripe/webhook", stripe.HandleWebhook)
+	mux.HandleFunc("POST /v1/stripe/checkout-session", stripeClient.CreateCheckoutSession)
+	mux.HandleFunc("POST /v1/stripe/webhook", stripeClient.HandleWebhook)
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
