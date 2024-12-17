@@ -1,6 +1,7 @@
 package stripe
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,7 +9,6 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/numfmt"
 	"github.com/stripe/stripe-go/v80"
@@ -34,10 +34,38 @@ func calculateTokens(cents int64) int64 {
 	}
 }
 
-func HandleWebhook(w http.ResponseWriter, req *http.Request) {
+const webhookSecretId = "STRIPE_WEBHOOK_SECRET"
+
+func (cl *Client) setupWebhook(ctx context.Context) error {
+	cl.mu.RLock()
+	if cl.webhookSecret != "" {
+		cl.mu.RUnlock()
+		return nil
+	}
+	cl.mu.RUnlock()
+
+	cl.mu.Lock()
+	defer cl.mu.Unlock()
+	if cl.webhookSecret != "" {
+		return nil
+	}
+	webhookSecret, err := cl.sc.Secr.FetchEnv(ctx, webhookSecretId)
+	if err != nil {
+		return err
+	}
+	cl.webhookSecret = webhookSecret
+	slog.Info("stripe webhook secret set", "secret_id", webhookSecretId)
+	return nil
+}
+
+func (cl *Client) HandleWebhook(w http.ResponseWriter, r *http.Request) {
+	if err := cl.setupWebhook(r.Context()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	const MaxBodyBytes = int64(65536)
-	req.Body = http.MaxBytesReader(w, req.Body, MaxBodyBytes)
-	payload, err := io.ReadAll(req.Body)
+	r.Body = http.MaxBytesReader(w, r.Body, MaxBodyBytes)
+	payload, err := io.ReadAll(r.Body)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading request body: %v\n", err)
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -55,9 +83,8 @@ func HandleWebhook(w http.ResponseWriter, req *http.Request) {
 	// If you are testing with the CLI, find the secret by running 'stripe listen'
 	// If you are using an endpoint defined with the API or dashboard, look in your webhook settings
 	// at https://dashboard.stripe.com/webhooks
-	endpointSecret := secr.STRIPE_WEBHOOK_SECRET.String()
-	signatureHeader := req.Header.Get("Stripe-Signature")
-	event, err = webhook.ConstructEvent(payload, signatureHeader, endpointSecret)
+	signatureHeader := r.Header.Get("Stripe-Signature")
+	event, err = webhook.ConstructEvent(payload, signatureHeader, cl.webhookSecret)
 	if err != nil {
 		slog.Error("webhook signature verification failed", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)

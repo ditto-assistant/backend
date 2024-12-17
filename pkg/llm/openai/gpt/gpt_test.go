@@ -14,7 +14,7 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	if err := secr.Setup(context.Background()); err != nil {
+	if _, err := secr.Setup(context.Background()); err != nil {
 		log.Fatalf("failed to initialize secrets: %s", err)
 	}
 	os.Exit(m.Run())
