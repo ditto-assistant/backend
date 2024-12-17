@@ -1,9 +1,10 @@
-package v1
+package api
 
 import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"github.com/ditto-assistant/backend/pkg/db/users"
@@ -17,7 +18,7 @@ type Service struct {
 	SearchClient *search.Client
 }
 
-func (s *Service) HandleSearch(w http.ResponseWriter, r *http.Request) {
+func (s *Service) WebSearch(w http.ResponseWriter, r *http.Request) {
 	tok, err := s.Auth.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
@@ -61,4 +62,30 @@ func (s *Service) HandleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	search.Text(w)
+}
+
+func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
+	tok, err := s.Auth.VerifyToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var bod rq.BalanceV1
+	if err := bod.FromQuery(r); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = tok.Check(bod)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	rsp, err := users.GetBalance(r.Context(), bod)
+	if err != nil {
+		slog.Error("failed to handle balance request", "uid", bod.UserID, "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(rsp)
 }

@@ -22,9 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/cfg/secr"
-	"github.com/ditto-assistant/backend/pkg/api/accounts"
-	"github.com/ditto-assistant/backend/pkg/api/stripe"
-	v1 "github.com/ditto-assistant/backend/pkg/api/v1"
+	"github.com/ditto-assistant/backend/pkg/api/v1"
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/db/users"
 	"github.com/ditto-assistant/backend/pkg/fbase"
@@ -42,6 +40,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/search/brave"
 	"github.com/ditto-assistant/backend/pkg/search/google"
 	"github.com/ditto-assistant/backend/pkg/service"
+	"github.com/ditto-assistant/backend/pkg/stripe"
 	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/firebase/genkit/go/plugins/vertexai"
 	"github.com/omniaura/mapcache"
@@ -91,15 +90,20 @@ func main() {
 		search.WithService(brave.NewService(svcCtx)),
 		search.WithService(google.NewService(svcCtx)),
 	)
-	v1Client := v1.Service{
+	v1Client := api.Service{
 		Auth:         auth,
 		SearchClient: searchClient,
 	}
 	stripeClient := stripe.NewClient(svcCtx)
-	mux.HandleFunc("GET /v1/balance", accounts.GetBalanceV1)
-	mux.HandleFunc("POST /v1/google-search", v1Client.HandleSearch)
+	mux.HandleFunc("GET /v1/balance", v1Client.Balance)
+	mux.HandleFunc("POST /v1/google-search", v1Client.WebSearch)
 	mux.HandleFunc("POST /v1/stripe/checkout-session", stripeClient.CreateCheckoutSession)
 	mux.HandleFunc("POST /v1/stripe/webhook", stripeClient.HandleWebhook)
+
+	mux.HandleFunc("GET /api/v2/balance", v1Client.Balance)
+	mux.HandleFunc("POST /api/v2/web-search", v1Client.WebSearch)
+	mux.HandleFunc("POST /api/v2/stripe/checkout-session", stripeClient.CreateCheckoutSession)
+	mux.HandleFunc("POST /api/v2/stripe/webhook", stripeClient.HandleWebhook)
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
