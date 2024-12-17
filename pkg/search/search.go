@@ -6,7 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/ditto-assistant/backend/pkg/db/users"
-	"github.com/ditto-assistant/backend/types/ty"
+	"github.com/ditto-assistant/backend/pkg/service"
 )
 
 type Service interface {
@@ -24,32 +24,24 @@ type Results interface {
 }
 
 type Client struct {
-	sc       ty.ServiceContext
+	sc       service.Context
 	services []Service
 }
 
-type Option func(*Client) error
+type Option func(*Client)
 
-func WithService(svc func(ty.ServiceContext) (Service, error)) Option {
-	return func(c *Client) error {
-		svc, err := svc(c.sc)
-		if err != nil {
-			return err
-		}
+func WithService(svc Service) Option {
+	return func(c *Client) {
 		c.services = append(c.services, svc)
-		return nil
 	}
 }
 
-func NewClient(sc ty.ServiceContext, opts ...Option) (*Client, error) {
-	c := &Client{sc: sc}
+func NewClient(opts ...Option) *Client {
+	c := &Client{}
 	for _, opt := range opts {
-		err := opt(c)
-		if err != nil {
-			return nil, err
-		}
+		opt(c)
 	}
-	return c, nil
+	return c
 }
 
 const MAX_TRIES = 4

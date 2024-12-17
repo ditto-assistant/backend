@@ -1,18 +1,27 @@
 package stripe
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 
 	"github.com/ditto-assistant/backend/cfg/envs"
-	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/fbase"
+	"github.com/ditto-assistant/backend/pkg/service"
 	"github.com/stripe/stripe-go/v80"
 	"github.com/stripe/stripe-go/v80/checkout/session"
 )
 
-func Setup() {
-	stripe.Key = secr.STRIPE_SECRET_KEY.String()
+type Client struct {
+	mu            sync.RWMutex
+	sc            service.Context
+	webhookSecret string
+}
+
+func NewClient(sc service.Context) *Client {
+	return &Client{sc: sc}
 }
 
 type requestCreateCheckoutSession struct {
@@ -27,7 +36,35 @@ func (r requestCreateCheckoutSession) GetUserID() string {
 	return r.UserID
 }
 
-func CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
+const secretKeyId = "STRIPE_SECRET_KEY"
+
+func (cl *Client) setupCheckoutSession(ctx context.Context) error {
+	cl.mu.RLock()
+	if stripe.Key != "" {
+		cl.mu.RUnlock()
+		return nil
+	}
+	cl.mu.RUnlock()
+
+	cl.mu.Lock()
+	defer cl.mu.Unlock()
+	if stripe.Key != "" {
+		return nil
+	}
+	stripeKey, err := cl.sc.Secr.FetchEnv(ctx, secretKeyId)
+	if err != nil {
+		return err
+	}
+	stripe.Key = stripeKey
+	slog.Debug("stripe secret key set", "secret_id", secretKeyId)
+	return nil
+}
+
+func (cl *Client) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) {
+	if err := cl.setupCheckoutSession(r.Context()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	// Parse the form data
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

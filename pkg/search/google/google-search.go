@@ -6,35 +6,61 @@ import (
 	"io"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/ditto-assistant/backend/cfg/envs"
-	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/llm"
 	"github.com/ditto-assistant/backend/pkg/search"
-	"github.com/ditto-assistant/backend/types/ty"
+	"github.com/ditto-assistant/backend/pkg/service"
 	"google.golang.org/api/customsearch/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 )
 
 type Service struct {
+	mu           sync.RWMutex
 	customSearch *customsearch.Service
-	sc           ty.ServiceContext
+	sc           service.Context
 }
 
 var _ search.Service = (*Service)(nil)
 
-func NewService(sc ty.ServiceContext) (svc search.Service, err error) {
-	customSearch, err := customsearch.NewService(sc.Background, option.WithAPIKey(secr.SEARCH_API_KEY.String()))
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize custom search: %w", err)
+const ApiKeyID = "SEARCH_API_KEY"
+
+func NewService(sc service.Context) *Service {
+	return &Service{sc: sc}
+}
+
+func (s *Service) setup(ctx context.Context) error {
+	s.mu.RLock()
+	svc := s.customSearch
+	s.mu.RUnlock()
+	if svc != nil {
+		return nil
 	}
-	return &Service{customSearch, sc}, nil
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.customSearch != nil {
+		return nil
+	}
+	key, err := s.sc.Secr.Fetch(ctx, ApiKeyID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch api key: %w", err)
+	}
+	s.customSearch, err = customsearch.NewService(s.sc.Background, option.WithAPIKey(key))
+	if err != nil {
+		return fmt.Errorf("failed to initialize custom search: %w", err)
+	}
+	slog.Debug("google search initialized", "secret_id", ApiKeyID)
+	return nil
 }
 
 func (s *Service) Search(ctx context.Context, req search.Request) (results search.Results, err error) {
+	if err := s.setup(ctx); err != nil {
+		return nil, fmt.Errorf("failed to setup custom search: %w", err)
+	}
 	ser, err := s.customSearch.Cse.List().Do(
 		googleapi.QueryParameter("q", req.Query),
 		googleapi.QueryParameter("num", strconv.Itoa(req.NumResults)),
@@ -59,7 +85,6 @@ func (s *Service) Search(ctx context.Context, req search.Request) (results searc
 		slog.Debug("google search completed",
 			"user_id", req.User.ID,
 			"balance", req.User.Balance,
-			"total_tokens_airdropped", req.User.TotalTokensAirdropped,
 			"service", llm.SearchEngineGoogle,
 			"receipt_id", receipt.ID,
 			"service_id", receipt.ServiceID,

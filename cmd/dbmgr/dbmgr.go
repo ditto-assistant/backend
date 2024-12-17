@@ -174,7 +174,7 @@ func main() {
 		log.Fatalf("unknown command: %s", subcommand)
 	}
 
-	if err := secr.Setup(ctx); err != nil {
+	if _, err := secr.Setup(ctx); err != nil {
 		log.Fatalf("failed to initialize secrets: %s", err)
 	}
 	if err := db.Setup(ctx, &shutdown, db.ModeCloud); err != nil {
