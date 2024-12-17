@@ -30,6 +30,7 @@ var (
 	PRICE_ID_TOKENS_30B    string
 	PRICE_ID_TOKENS_100B   string
 	PRICE_ID_TOKENS_150B   string
+	SEARCH_ENGINE_ID       string
 )
 
 type Env string
@@ -120,6 +121,7 @@ func Load() error {
 		{&PRICE_ID_TOKENS_30B, "PRICE_ID_TOKENS_30B"},
 		{&PRICE_ID_TOKENS_100B, "PRICE_ID_TOKENS_100B"},
 		{&PRICE_ID_TOKENS_150B, "PRICE_ID_TOKENS_150B"},
+		{&SEARCH_ENGINE_ID, "SEARCH_ENGINE_ID"},
 	}
 	if err := lookupEnvs(envs); err != nil {
 		return err
