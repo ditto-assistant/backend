@@ -9,28 +9,56 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
-	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/llm"
 	"github.com/ditto-assistant/backend/pkg/search"
-	"github.com/ditto-assistant/backend/types/ty"
+	"github.com/ditto-assistant/backend/pkg/service"
 )
 
 type Service struct {
-	sc ty.ServiceContext
+	mu     sync.RWMutex
+	sc     service.Context
+	apiKey string
 }
 
 var _ search.Service = (*Service)(nil)
 
-func NewService(sc ty.ServiceContext) (svc search.Service, err error) {
-	return &Service{sc: sc}, nil
+func NewService(sc service.Context) *Service {
+	return &Service{sc: sc}
 }
 
 const basedURL = "https://api.search.brave.com/res/v1/web/search"
+const ApiKeyID = "BRAVE_SEARCH_API_KEY"
+
+func (s *Service) setupKey(ctx context.Context) (string, error) {
+	s.mu.RLock()
+	key := s.apiKey
+	s.mu.RUnlock()
+	if key != "" {
+		return key, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.apiKey != "" {
+		return s.apiKey, nil
+	}
+	var err error
+	s.apiKey, err = s.sc.Secr.Fetch(ctx, ApiKeyID)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch api key: %w", err)
+	}
+	slog.Debug("brave search initialized", "secret_id", ApiKeyID)
+	return s.apiKey, nil
+}
 
 func (s *Service) Search(ctx context.Context, req search.Request) (search.Results, error) {
+	key, err := s.setupKey(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to setup api key: %w", err)
+	}
 	q := url.Values{
 		"q":     {req.Query},
 		"count": {strconv.Itoa(req.NumResults)},
@@ -39,7 +67,7 @@ func (s *Service) Search(ctx context.Context, req search.Request) (search.Result
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	rr.Header.Add("X-Subscription-Token", secr.BRAVE_SEARCH_API_KEY.String())
+	rr.Header.Add("X-Subscription-Token", key)
 	resp, err := http.DefaultClient.Do(rr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
@@ -68,7 +96,6 @@ func (s *Service) Search(ctx context.Context, req search.Request) (search.Result
 		slog.Debug("brave search completed",
 			"user_id", req.User.ID,
 			"balance", req.User.Balance,
-			"total_tokens_airdropped", req.User.TotalTokensAirdropped,
 			"service", llm.SearchEngineBrave,
 			"receipt_id", receipt.ID,
 			"service_id", receipt.ServiceID,
