@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -38,13 +37,13 @@ import (
 	"github.com/ditto-assistant/backend/pkg/llm/openai/dalle"
 	"github.com/ditto-assistant/backend/pkg/llm/openai/gpt"
 	"github.com/ditto-assistant/backend/pkg/middleware"
+	"github.com/ditto-assistant/backend/pkg/search"
 	"github.com/ditto-assistant/backend/pkg/search/brave"
+	"github.com/ditto-assistant/backend/pkg/search/google"
 	"github.com/ditto-assistant/backend/types/rq"
+	"github.com/ditto-assistant/backend/types/ty"
 	"github.com/firebase/genkit/go/plugins/vertexai"
 	"github.com/omniaura/mapcache"
-	"google.golang.org/api/customsearch/v1"
-	"google.golang.org/api/googleapi"
-	"google.golang.org/api/option"
 )
 
 func main() {
@@ -81,7 +80,18 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to create session: %v", err)
 	}
+	svcCtx := ty.ServiceContext{
+		Background: bgCtx,
+		ShutdownWG: &shutdownWG,
+	}
 	s3Client := s3.New(mySession)
+	searchClient, err := search.NewClient(svcCtx,
+		search.WithService(brave.NewService),
+		search.WithService(google.NewService),
+	)
+	if err != nil {
+		log.Fatalf("failed to initialize search client: %v", err)
+	}
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
@@ -261,10 +271,6 @@ func main() {
 		}()
 	})
 
-	customSearch, err := customsearch.NewService(bgCtx, option.WithAPIKey(secr.SEARCH_API_KEY.String()))
-	if err != nil {
-		log.Fatalf("failed to initialize custom search: %s", err)
-	}
 	// - MARK: google-search
 	mux.HandleFunc("POST /v1/google-search", func(w http.ResponseWriter, r *http.Request) {
 		tok, err := auth.VerifyToken(r)
@@ -299,63 +305,17 @@ func main() {
 			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 			return
 		}
-		search, err := brave.Search(r.Context(), bod.Query, bod.NumResults)
-		if err == nil {
-			search.Text(w)
-
-			shutdownWG.Add(1)
-			go func() {
-				defer shutdownWG.Done()
-				ctx, cancel := context.WithTimeout(bgCtx, 15*time.Second)
-				defer cancel()
-				receipt := db.Receipt{
-					UserID:      user.ID,
-					NumSearches: 1,
-					ServiceName: llm.SearchEngineBrave,
-				}
-				if err := receipt.Insert(ctx); err != nil {
-					slog.Error("failed to insert receipt", "error", err)
-				}
-			}()
-			return
+		searchRequest := search.Request{
+			User:       user,
+			Query:      bod.Query,
+			NumResults: bod.NumResults,
 		}
-		slog.Error("failed to search with Brave, trying Google", "error", err)
-		ser, err := customSearch.Cse.List().Do(
-			googleapi.QueryParameter("q", bod.Query),
-			googleapi.QueryParameter("num", strconv.Itoa(bod.NumResults)),
-			googleapi.QueryParameter("cx", os.Getenv("SEARCH_ENGINE_ID")),
-		)
+		search, err := searchClient.Search(ctx, searchRequest)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		w.Write([]byte{'\n', '\n'})
-		if len(ser.Items) == 0 {
-			slog.Warn("no search results found", "query", bod.Query)
-			fmt.Fprintln(w, "No results found")
-			return
-		}
-		for i, item := range ser.Items {
-			fmt.Fprintf(w,
-				"%d. [%s](%s)\n\t- %s\n\n",
-				i+1, item.Title, item.Link, item.Snippet,
-			)
-		}
-
-		shutdownWG.Add(1)
-		go func() {
-			defer shutdownWG.Done()
-			ctx, cancel := context.WithTimeout(bgCtx, 15*time.Second)
-			defer cancel()
-			receipt := db.Receipt{
-				UserID:      user.ID,
-				NumSearches: 1,
-				ServiceName: llm.SearchEngineGoogle,
-			}
-			if err := receipt.Insert(ctx); err != nil {
-				slog.Error("failed to insert receipt", "error", err)
-			}
-		}()
+		search.Text(w)
 	})
 
 	// - MARK: presign-url

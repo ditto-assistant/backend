@@ -5,54 +5,77 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/ditto-assistant/backend/cfg/secr"
+	"github.com/ditto-assistant/backend/pkg/db"
+	"github.com/ditto-assistant/backend/pkg/llm"
 	"github.com/ditto-assistant/backend/pkg/search"
+	"github.com/ditto-assistant/backend/types/ty"
 )
 
-type Service struct{}
+type Service struct {
+	sc ty.ServiceContext
+}
 
 var _ search.Service = (*Service)(nil)
 
-func NewService() *Service {
-	return &Service{}
-}
-
-func (s *Service) Search(ctx context.Context, req search.Request) (results search.Results, err error) {
-	results, err = Search(ctx, req.Query, req.NumResults)
-	if err != nil {
-		return
-	}
-	return results, nil
+func NewService(sc ty.ServiceContext) (svc search.Service, err error) {
+	return &Service{sc: sc}, nil
 }
 
 const basedURL = "https://api.search.brave.com/res/v1/web/search"
 
-func Search(ctx context.Context, query string, numResults int) (results Results, err error) {
+func (s *Service) Search(ctx context.Context, req search.Request) (search.Results, error) {
 	q := url.Values{
-		"q":     {query},
-		"count": {strconv.Itoa(numResults)},
+		"q":     {req.Query},
+		"count": {strconv.Itoa(req.NumResults)},
 	}
-
-	req, err := http.NewRequestWithContext(ctx, "GET", basedURL+"?"+q.Encode(), nil)
+	rr, err := http.NewRequestWithContext(ctx, "GET", basedURL+"?"+q.Encode(), nil)
 	if err != nil {
-		return
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Add("X-Subscription-Token", secr.BRAVE_SEARCH_API_KEY.String())
-	resp, err := http.DefaultClient.Do(req)
+	rr.Header.Add("X-Subscription-Token", secr.BRAVE_SEARCH_API_KEY.String())
+	resp, err := http.DefaultClient.Do(rr)
 	if err != nil {
-		return
+		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		err = fmt.Errorf("brave search returned status code %d", resp.StatusCode)
-		return
+		return nil, fmt.Errorf("brave search returned status code %d", resp.StatusCode)
 	}
-	err = json.NewDecoder(resp.Body).Decode(&results)
-	return
+	var results Results
+	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	s.sc.ShutdownWG.Add(1)
+	go func() {
+		defer s.sc.ShutdownWG.Done()
+		ctx, cancel := context.WithTimeout(s.sc.Background, 15*time.Second)
+		defer cancel()
+		receipt := db.Receipt{
+			UserID:      req.User.ID,
+			NumSearches: 1,
+			ServiceName: llm.SearchEngineBrave,
+		}
+		if err := receipt.Insert(ctx); err != nil {
+			slog.Error("failed to insert receipt for brave search", "error", err)
+		}
+		slog.Debug("brave search completed",
+			"user_id", req.User.ID,
+			"balance", req.User.Balance,
+			"total_tokens_airdropped", req.User.TotalTokensAirdropped,
+			"service", llm.SearchEngineBrave,
+			"receipt_id", receipt.ID,
+			"service_id", receipt.ServiceID,
+			"num_searches", receipt.NumSearches,
+		)
+	}()
+	return results, nil
 }
 
 func (r Results) Text(w io.Writer) error {
@@ -60,7 +83,6 @@ func (r Results) Text(w io.Writer) error {
 		fmt.Fprintln(w, "No results found")
 		return nil
 	}
-
 	// Video Results
 	fmt.Fprintln(w, "Video Results:")
 	if len(r.Videos.Results) == 0 {
@@ -76,7 +98,6 @@ func (r Results) Text(w io.Writer) error {
 			fmt.Fprintf(w, "   Thumbnail: %s\n\n", result.Thumbnail.Src)
 		}
 	}
-
 	// Web Results
 	fmt.Fprintln(w, "\nWeb Results:")
 	if len(r.Web.Results) == 0 {
