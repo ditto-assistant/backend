@@ -24,6 +24,7 @@ import (
 	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/api/accounts"
 	"github.com/ditto-assistant/backend/pkg/api/stripe"
+	v1 "github.com/ditto-assistant/backend/pkg/api/v1"
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/db/users"
 	"github.com/ditto-assistant/backend/pkg/fbase"
@@ -92,6 +93,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to initialize search client: %v", err)
 	}
+	v1Client := v1.Service{
+		Auth:         auth,
+		SearchClient: searchClient,
+	}
+	mux.HandleFunc("POST /v1/google-search", v1Client.HandleSearch)
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
@@ -269,53 +275,6 @@ func main() {
 				slog.Error("failed to insert receipt", "error", err)
 			}
 		}()
-	})
-
-	// - MARK: google-search
-	mux.HandleFunc("POST /v1/google-search", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := auth.VerifyToken(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		var bod rq.SearchV1
-		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
-			if err == io.EOF {
-				http.Error(w, "request body is empty", http.StatusBadRequest)
-			} else {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-			}
-			return
-		}
-		err = tok.Check(bod)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		if bod.NumResults == 0 {
-			bod.NumResults = 5
-		}
-		user := users.User{UID: bod.UserID}
-		ctx := r.Context()
-		if err := user.Get(ctx); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if user.Balance <= 0 {
-			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
-			return
-		}
-		searchRequest := search.Request{
-			User:       user,
-			Query:      bod.Query,
-			NumResults: bod.NumResults,
-		}
-		search, err := searchClient.Search(ctx, searchRequest)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		search.Text(w)
 	})
 
 	// - MARK: presign-url
