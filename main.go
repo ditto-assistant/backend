@@ -13,7 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -42,28 +41,6 @@ import (
 	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/firebase/genkit/go/plugins/vertexai"
 )
-
-// Memory represents a conversation memory with vector similarity
-type Memory struct {
-	ID             string    `json:"id"`
-	Score          float32   `json:"score"`
-	Prompt         string    `json:"prompt"`
-	Response       string    `json:"response"`
-	Timestamp      time.Time `json:"timestamp"`
-	VectorDistance float32   `json:"vector_distance"`
-}
-
-// GetMemoriesRequest represents the request body for getting memories
-type GetMemoriesRequest struct {
-	UserID string    `json:"userId"`
-	Vector []float32 `json:"vector"`
-	K      int       `json:"k,omitempty"`
-}
-
-// GetMemoriesResponse represents the response for getting memories
-type GetMemoriesResponse struct {
-	Memories []Memory `json:"memories"`
-}
 
 func main() {
 	bgCtx, cancel := context.WithCancel(context.Background())
@@ -121,12 +98,9 @@ func main() {
 	mux.HandleFunc("POST /v1/google-search", v1Client.WebSearch)
 	mux.HandleFunc("POST /v1/generate-image", v1Client.GenerateImage)
 	mux.HandleFunc("POST /v1/presign-url", v1Client.PresignURL)
+	mux.HandleFunc("POST /v1/get-memories", v1Client.GetMemories)
 	mux.HandleFunc("POST /v1/stripe/checkout-session", stripeClient.CreateCheckoutSession)
 	mux.HandleFunc("POST /v1/stripe/webhook", stripeClient.HandleWebhook)
-	// mux.HandleFunc("GET /api/v2/balance", v1Client.Balance)
-	// mux.HandleFunc("POST /api/v2/web-search", v1Client.WebSearch)
-	// mux.HandleFunc("POST /api/v2/stripe/checkout-session", stripeClient.CreateCheckoutSession)
-	// mux.HandleFunc("POST /api/v2/stripe/webhook", stripeClient.HandleWebhook)
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
@@ -337,98 +311,6 @@ func main() {
 			fmt.Fprintf(w, "Example %d\n", i+1)
 			fmt.Fprintf(w, "User's Prompt: %s\nDitto:\n%s\n\n", example.Prompt, example.Response)
 		}
-	})
-
-	// - MARK: get-memories
-
-	mux.HandleFunc("POST /v1/get-memories", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := auth.VerifyToken(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		var req rq.GetMemoriesV1
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			slog.Error("Failed to decode request body", "error", err)
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
-			return
-		}
-		err = tok.Check(req)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		if len(req.Vector) == 0 {
-			slog.Error("Missing required parameters",
-				"userId", req.UserID != "",
-				"vector", req.Vector != nil)
-			http.Error(w, "Missing required parameters", http.StatusBadRequest)
-			return
-		}
-		if len(req.Vector) > 2048 {
-			slog.Error("Vector dimension exceeds maximum allowed (2048)")
-			http.Error(w, "Vector dimension exceeds maximum allowed (2048)", http.StatusBadRequest)
-			return
-		}
-		if req.K == 0 {
-			req.K = 5
-		}
-		if req.K > 100 {
-			slog.Error("Number of requested neighbors exceeds maximum allowed (1000)")
-			http.Error(w, "Number of requested neighbors exceeds maximum allowed (1000)", http.StatusBadRequest)
-			return
-		}
-		app, err := fbase.App(r.Context())
-		if err != nil {
-			slog.Error("Failed to get Firebase app", "error", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-		fs, err := app.Firestore(r.Context())
-		if err != nil {
-			slog.Error("Failed to get Firestore client", "error", err)
-			http.Error(w, "Internal server error", http.StatusInternalServerError)
-			return
-		}
-		memoriesRef := fs.Collection("memory").Doc(req.UserID).Collection("conversations")
-		vectorQuery := memoriesRef.FindNearest("embedding_vector",
-			req.Vector,
-			req.K,
-			firestore.DistanceMeasureCosine,
-			&firestore.FindNearestOptions{
-				DistanceResultField: "vector_distance",
-			})
-		querySnapshot, err := vectorQuery.Documents(r.Context()).GetAll()
-		if err != nil {
-			slog.Error("Failed to execute vector query", "error", err)
-			http.Error(w, "Failed to search memories", http.StatusInternalServerError)
-			return
-		}
-		slog.Debug("Retrieved memories", "count", len(querySnapshot))
-		memories := make([]Memory, 0, len(querySnapshot))
-		for _, doc := range querySnapshot {
-			var data struct {
-				Prompt         string    `firestore:"prompt"`
-				Response       string    `firestore:"response"`
-				Timestamp      time.Time `firestore:"timestamp"`
-				VectorDistance float32   `firestore:"vector_distance"`
-			}
-			if err := doc.DataTo(&data); err != nil {
-				slog.Error("Failed to unmarshal document", "error", err, "docID", doc.Ref.ID)
-				continue
-			}
-			similarityScore := 1 - data.VectorDistance
-			memories = append(memories, Memory{
-				ID:             doc.Ref.ID,
-				Score:          similarityScore,
-				Prompt:         data.Prompt,
-				Response:       data.Response,
-				Timestamp:      data.Timestamp,
-				VectorDistance: data.VectorDistance,
-			})
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(GetMemoriesResponse{Memories: memories})
 	})
 
 	corsMiddleware := middleware.NewCors()
