@@ -98,12 +98,9 @@ func main() {
 	mux.HandleFunc("POST /v1/google-search", v1Client.WebSearch)
 	mux.HandleFunc("POST /v1/generate-image", v1Client.GenerateImage)
 	mux.HandleFunc("POST /v1/presign-url", v1Client.PresignURL)
+	mux.HandleFunc("POST /v1/get-memories", v1Client.GetMemories)
 	mux.HandleFunc("POST /v1/stripe/checkout-session", stripeClient.CreateCheckoutSession)
 	mux.HandleFunc("POST /v1/stripe/webhook", stripeClient.HandleWebhook)
-	// mux.HandleFunc("GET /api/v2/balance", v1Client.Balance)
-	// mux.HandleFunc("POST /api/v2/web-search", v1Client.WebSearch)
-	// mux.HandleFunc("POST /api/v2/stripe/checkout-session", stripeClient.CreateCheckoutSession)
-	// mux.HandleFunc("POST /api/v2/stripe/webhook", stripeClient.HandleWebhook)
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {

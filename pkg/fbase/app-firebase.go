@@ -6,10 +6,12 @@ import (
 
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/auth"
+	"cloud.google.com/go/firestore"
 )
 
 type FirebaseApp interface {
 	Auth(ctx context.Context) (*auth.Client, error)
+	Firestore(ctx context.Context) (*firestore.Client, error)
 }
 
 var (
