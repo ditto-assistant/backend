@@ -1,17 +1,14 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -43,7 +40,6 @@ import (
 	"github.com/ditto-assistant/backend/pkg/stripe"
 	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/firebase/genkit/go/plugins/vertexai"
-	"github.com/omniaura/mapcache"
 )
 
 func main() {
@@ -70,7 +66,6 @@ func main() {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
 	mux := http.NewServeMux()
-	bucket := aws.String(envs.DITTO_CONTENT_BUCKET)
 	s3Config := &aws.Config{
 		Credentials: credentials.NewStaticCredentials(envs.BACKBLAZE_KEY_ID, secr.BACKBLAZE_API_KEY.String(), ""),
 		Region:      aws.String(envs.DITTO_CONTENT_REGION),
@@ -90,20 +85,25 @@ func main() {
 		search.WithService(brave.NewService(svcCtx)),
 		search.WithService(google.NewService(svcCtx)),
 	)
-	v1Client := api.Service{
+	dalleClient := dalle.NewClient(secr.OPENAI_DALLE_API_KEY.String(), llm.HttpClient)
+	v1Client := api.NewService(svcCtx, api.ServiceClients{
 		Auth:         auth,
 		SearchClient: searchClient,
-	}
+		S3:           s3Client,
+		Dalle:        dalleClient,
+	})
 	stripeClient := stripe.NewClient(svcCtx)
 	mux.HandleFunc("GET /v1/balance", v1Client.Balance)
+	mux.HandleFunc("POST /v1/create-upload-url", v1Client.CreateUploadURL)
 	mux.HandleFunc("POST /v1/google-search", v1Client.WebSearch)
+	mux.HandleFunc("POST /v1/generate-image", v1Client.GenerateImage)
+	mux.HandleFunc("POST /v1/presign-url", v1Client.PresignURL)
 	mux.HandleFunc("POST /v1/stripe/checkout-session", stripeClient.CreateCheckoutSession)
 	mux.HandleFunc("POST /v1/stripe/webhook", stripeClient.HandleWebhook)
-
-	mux.HandleFunc("GET /api/v2/balance", v1Client.Balance)
-	mux.HandleFunc("POST /api/v2/web-search", v1Client.WebSearch)
-	mux.HandleFunc("POST /api/v2/stripe/checkout-session", stripeClient.CreateCheckoutSession)
-	mux.HandleFunc("POST /api/v2/stripe/webhook", stripeClient.HandleWebhook)
+	// mux.HandleFunc("GET /api/v2/balance", v1Client.Balance)
+	// mux.HandleFunc("POST /api/v2/web-search", v1Client.WebSearch)
+	// mux.HandleFunc("POST /api/v2/stripe/checkout-session", stripeClient.CreateCheckoutSession)
+	// mux.HandleFunc("POST /api/v2/stripe/webhook", stripeClient.HandleWebhook)
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
@@ -275,187 +275,6 @@ func main() {
 			receipt := db.Receipt{
 				UserID:      user.ID,
 				TotalTokens: int64(llm.EstimateTokens(bod.Text)),
-				ServiceName: bod.Model,
-			}
-			if err := receipt.Insert(ctx); err != nil {
-				slog.Error("failed to insert receipt", "error", err)
-			}
-		}()
-	})
-
-	// - MARK: presign-url
-	const presignTTL = 24 * time.Hour
-	urlCache, _ := mapcache.New[string, string](
-		mapcache.WithTTL(presignTTL/2),
-		mapcache.WithCleanup(bgCtx, presignTTL),
-	)
-	mux.HandleFunc("POST /v1/presign-url", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := auth.VerifyToken(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		var bod rq.PresignedURLV1
-		if err := json.Unmarshal(body, &bod); err != nil {
-			slog.Error("failed to decode request body", "error", err, "body", string(body), "path", r.URL.Path)
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		err = tok.Check(bod)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		url, err := urlCache.Get(bod.URL, func() (string, error) {
-			urlParts := strings.Split(bod.URL, "?")
-			if len(urlParts) == 0 {
-				return "", fmt.Errorf("failed to get filename from URL: %s", bod.URL)
-			}
-			if bod.Folder == "" {
-				bod.Folder = "generated-images"
-			}
-			// Clean filename
-			filename := strings.TrimPrefix(urlParts[0], envs.DITTO_CONTENT_PREFIX)
-			filename = strings.TrimPrefix(filename, envs.DALL_E_PREFIX)
-			filename = strings.TrimPrefix(filename, bod.UserID+"/")
-			filename = strings.TrimPrefix(filename, bod.Folder+"/")
-			key := fmt.Sprintf("%s/%s/%s", bod.UserID, bod.Folder, filename)
-			objReq, _ := s3Client.GetObjectRequest(&s3.GetObjectInput{
-				Bucket: bucket,
-				Key:    aws.String(key),
-			})
-			url, err := objReq.Presign(presignTTL)
-			if err != nil {
-				return "", fmt.Errorf("failed to generate presigned URL: %s", err)
-			}
-			return url, nil
-		})
-		if err != nil {
-			slog.Error("failed to generate presigned URL", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		fmt.Fprintln(w, url)
-	})
-
-	// - MARK: create-upload-url
-	mux.HandleFunc("POST /v1/create-upload-url", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := auth.VerifyToken(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		var bod rq.CreateUploadURLV1
-		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		err = tok.Check(bod)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		key := fmt.Sprintf("%s/uploads/%d", bod.UserID, time.Now().UnixNano())
-		req, _ := s3Client.PutObjectRequest(&s3.PutObjectInput{
-			Bucket: bucket,
-			Key:    aws.String(key),
-		})
-		url, err := req.Presign(15 * time.Minute)
-		slog.Debug("created upload URL", "url", url)
-		if err != nil {
-			slog.Error("failed to generate upload URL", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		fmt.Fprintln(w, url)
-	})
-
-	dalleClient := dalle.NewClient(secr.OPENAI_DALLE_API_KEY.String(), llm.HttpClient)
-	// - MARK: generate-image
-	mux.HandleFunc("POST /v1/generate-image", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := auth.VerifyToken(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		var bod rq.GenerateImageV1
-		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		err = tok.Check(bod)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		user := users.User{UID: bod.UserID}
-		ctx := r.Context()
-		slog := slog.With("user_id", bod.UserID, "model", bod.Model)
-		if err := user.Get(ctx); err != nil {
-			slog.Error("failed to get user", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if user.Balance <= 0 {
-			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
-			return
-		}
-		url, err := dalleClient.Prompt(ctx, &bod)
-		if err != nil {
-			slog.Error("failed to generate image", "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		fmt.Fprintln(w, url)
-		slog.Debug("generated image", "url", url)
-
-		shutdownWG.Add(1)
-		go func() {
-			defer shutdownWG.Done()
-			ctx, cancel := context.WithTimeout(bgCtx, 15*time.Second)
-			defer cancel()
-			req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-			if err != nil {
-				slog.Error("failed to create image request", "error", err)
-				return
-			}
-			imgResp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				slog.Error("failed to download image", "error", err)
-				return
-			}
-			defer imgResp.Body.Close()
-			imgData, err := io.ReadAll(imgResp.Body)
-			if err != nil {
-				slog.Error("failed to read image data", "error", err)
-				return
-			}
-			urlParts := strings.Split(url, "?")
-			if len(urlParts) == 0 {
-				slog.Error("failed to get filename from URL", "url", url)
-				return
-			}
-			filename := strings.TrimPrefix(urlParts[0], envs.DALL_E_PREFIX)
-			key := fmt.Sprintf("%s/generated-images/%s", bod.UserID, filename)
-			put, err := s3Client.PutObject(&s3.PutObjectInput{
-				Bucket: bucket,
-				Key:    aws.String(key),
-				Body:   bytes.NewReader(imgData),
-			})
-			if err != nil {
-				slog.Error("failed to copy to S3", "error", err)
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-			slog.Debug("uploaded image to S3", "key", put.String())
-			receipt := db.Receipt{
-				UserID:      user.ID,
-				NumImages:   1,
 				ServiceName: bod.Model,
 			}
 			if err := receipt.Insert(ctx); err != nil {
