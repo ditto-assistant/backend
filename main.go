@@ -418,10 +418,6 @@ func main() {
 				continue
 			}
 			similarityScore := 1 - data.VectorDistance
-			slog.Debug("Processing memory",
-				"docID", doc.Ref.ID,
-				"similarity", similarityScore)
-
 			memories = append(memories, Memory{
 				ID:             doc.Ref.ID,
 				Score:          similarityScore,
