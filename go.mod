@@ -3,6 +3,7 @@ module github.com/ditto-assistant/backend
 go 1.23.3
 
 require (
+	cloud.google.com/go/firestore v1.17.0
 	firebase.google.com/go/v4 v4.15.1
 	github.com/aws/aws-sdk-go v1.55.5
 	github.com/firebase/genkit/go v0.2.1
@@ -22,7 +23,6 @@ require (
 	cloud.google.com/go/auth v0.13.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.6 // indirect
 	cloud.google.com/go/compute/metadata v0.6.0 // indirect
-	cloud.google.com/go/firestore v1.17.0 // indirect
 	cloud.google.com/go/iam v1.2.2 // indirect
 	cloud.google.com/go/longrunning v0.6.2 // indirect
 	cloud.google.com/go/storage v1.43.0 // indirect
