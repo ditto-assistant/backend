@@ -1,25 +1,97 @@
 package api
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
+	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/ditto-assistant/backend/cfg/envs"
+	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/db/users"
 	"github.com/ditto-assistant/backend/pkg/fbase"
+	"github.com/ditto-assistant/backend/pkg/llm/openai/dalle"
 	"github.com/ditto-assistant/backend/pkg/search"
+	"github.com/ditto-assistant/backend/pkg/service"
 	"github.com/ditto-assistant/backend/types/rq"
+	"github.com/omniaura/mapcache"
 )
 
+const presignTTL = 24 * time.Hour
+
 type Service struct {
-	Auth         fbase.Auth
-	SearchClient *search.Client
+	sc           service.Context
+	auth         fbase.Auth
+	searchClient *search.Client
+	s3           *s3.S3
+	urlCache     *mapcache.MapCache[string, string]
+	dalle        *dalle.Client
 }
 
+type ServiceClients struct {
+	Auth         fbase.Auth
+	SearchClient *search.Client
+	S3           *s3.S3
+	Dalle        *dalle.Client
+}
+
+func NewService(sc service.Context, setup ServiceClients) *Service {
+	urlCache, err := mapcache.New[string, string](
+		mapcache.WithTTL(presignTTL/2),
+		mapcache.WithCleanup(sc.Background, presignTTL),
+	)
+	if err != nil {
+		panic(err)
+	}
+	return &Service{
+		sc:           sc,
+		auth:         setup.Auth,
+		searchClient: setup.SearchClient,
+		s3:           setup.S3,
+		urlCache:     urlCache,
+		dalle:        setup.Dalle,
+	}
+}
+
+// - MARK: balance
+
+func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
+	tok, err := s.auth.VerifyToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var bod rq.BalanceV1
+	if err := bod.FromQuery(r); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = tok.Check(bod)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	rsp, err := users.GetBalance(r.Context(), bod)
+	if err != nil {
+		slog.Error("failed to handle balance request", "uid", bod.UserID, "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(rsp)
+}
+
+// - MARK: web-search
+
 func (s *Service) WebSearch(w http.ResponseWriter, r *http.Request) {
-	tok, err := s.Auth.VerifyToken(r)
+	tok, err := s.auth.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -56,7 +128,7 @@ func (s *Service) WebSearch(w http.ResponseWriter, r *http.Request) {
 		Query:      bod.Query,
 		NumResults: bod.NumResults,
 	}
-	search, err := s.SearchClient.Search(ctx, searchRequest)
+	search, err := s.searchClient.Search(ctx, searchRequest)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -64,14 +136,16 @@ func (s *Service) WebSearch(w http.ResponseWriter, r *http.Request) {
 	search.Text(w)
 }
 
-func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
-	tok, err := s.Auth.VerifyToken(r)
+// - MARK: generate-image
+
+func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
+	tok, err := s.auth.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	var bod rq.BalanceV1
-	if err := bod.FromQuery(r); err != nil {
+	var bod rq.GenerateImageV1
+	if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -80,12 +154,164 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	rsp, err := users.GetBalance(r.Context(), bod)
-	if err != nil {
-		slog.Error("failed to handle balance request", "uid", bod.UserID, "error", err)
+	user := users.User{UID: bod.UserID}
+	ctx := r.Context()
+	slog := slog.With("user_id", bod.UserID, "model", bod.Model)
+	if err := user.Get(ctx); err != nil {
+		slog.Error("failed to get user", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(rsp)
+	if user.Balance <= 0 {
+		http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
+		return
+	}
+	url, err := s.dalle.Prompt(ctx, &bod)
+	if err != nil {
+		slog.Error("failed to generate image", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	fmt.Fprintln(w, url)
+	slog.Debug("generated image", "url", url)
+
+	s.sc.ShutdownWG.Add(1)
+	go func() {
+		defer s.sc.ShutdownWG.Done()
+		ctx, cancel := context.WithTimeout(s.sc.Background, 15*time.Second)
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			slog.Error("failed to create image request", "error", err)
+			return
+		}
+		imgResp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			slog.Error("failed to download image", "error", err)
+			return
+		}
+		defer imgResp.Body.Close()
+		imgData, err := io.ReadAll(imgResp.Body)
+		if err != nil {
+			slog.Error("failed to read image data", "error", err)
+			return
+		}
+		urlParts := strings.Split(url, "?")
+		if len(urlParts) == 0 {
+			slog.Error("failed to get filename from URL", "url", url)
+			return
+		}
+		filename := strings.TrimPrefix(urlParts[0], envs.DALL_E_PREFIX)
+		key := fmt.Sprintf("%s/generated-images/%s", bod.UserID, filename)
+		put, err := s.s3.PutObject(&s3.PutObjectInput{
+			Bucket: bucketDittoContent,
+			Key:    aws.String(key),
+			Body:   bytes.NewReader(imgData),
+		})
+		if err != nil {
+			slog.Error("failed to copy to S3", "error", err)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		slog.Debug("uploaded image to S3", "key", put.String())
+		receipt := db.Receipt{
+			UserID:      user.ID,
+			NumImages:   1,
+			ServiceName: bod.Model,
+		}
+		if err := receipt.Insert(ctx); err != nil {
+			slog.Error("failed to insert receipt", "error", err)
+		}
+	}()
+}
+
+// - MARK: presign-url
+
+var bucketDittoContent = aws.String(envs.DITTO_CONTENT_BUCKET)
+
+func (s *Service) PresignURL(w http.ResponseWriter, r *http.Request) {
+	tok, err := s.auth.VerifyToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var bod rq.PresignedURLV1
+	if err := json.Unmarshal(body, &bod); err != nil {
+		slog.Error("failed to decode request body", "error", err, "body", string(body), "path", r.URL.Path)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = tok.Check(bod)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	url, err := s.urlCache.Get(bod.URL, func() (string, error) {
+		urlParts := strings.Split(bod.URL, "?")
+		if len(urlParts) == 0 {
+			return "", fmt.Errorf("failed to get filename from URL: %s", bod.URL)
+		}
+		if bod.Folder == "" {
+			bod.Folder = "generated-images"
+		}
+		// Clean filename
+		filename := strings.TrimPrefix(urlParts[0], envs.DITTO_CONTENT_PREFIX)
+		filename = strings.TrimPrefix(filename, envs.DALL_E_PREFIX)
+		filename = strings.TrimPrefix(filename, bod.UserID+"/")
+		filename = strings.TrimPrefix(filename, bod.Folder+"/")
+		key := fmt.Sprintf("%s/%s/%s", bod.UserID, bod.Folder, filename)
+		objReq, _ := s.s3.GetObjectRequest(&s3.GetObjectInput{
+			Bucket: bucketDittoContent,
+			Key:    aws.String(key),
+		})
+		url, err := objReq.Presign(presignTTL)
+		if err != nil {
+			return "", fmt.Errorf("failed to generate presigned URL: %s", err)
+		}
+		return url, nil
+	})
+	if err != nil {
+		slog.Error("failed to generate presigned URL", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	fmt.Fprintln(w, url)
+}
+
+// - MARK: create-upload-url
+
+func (s *Service) CreateUploadURL(w http.ResponseWriter, r *http.Request) {
+	tok, err := s.auth.VerifyToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var bod rq.CreateUploadURLV1
+	if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = tok.Check(bod)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	key := fmt.Sprintf("%s/uploads/%d", bod.UserID, time.Now().UnixNano())
+	req, _ := s.s3.PutObjectRequest(&s3.PutObjectInput{
+		Bucket: bucketDittoContent,
+		Key:    aws.String(key),
+	})
+	url, err := req.Presign(15 * time.Minute)
+	slog.Debug("created upload URL", "url", url)
+	if err != nil {
+		slog.Error("failed to generate upload URL", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	fmt.Fprintln(w, url)
 }
