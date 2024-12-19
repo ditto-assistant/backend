@@ -100,3 +100,11 @@ type CreateUploadURLV1 struct {
 }
 
 func (c CreateUploadURLV1) GetUserID() string { return c.UserID }
+
+type GetMemoriesV1 struct {
+	UserID string    `json:"userID"`
+	Vector []float32 `json:"vector"`
+	K      int       `json:"k,omitempty"`
+}
+
+func (g GetMemoriesV1) GetUserID() string { return g.UserID }
