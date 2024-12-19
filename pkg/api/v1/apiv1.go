@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/firestore"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/ditto-assistant/backend/cfg/envs"
@@ -314,4 +315,233 @@ func (s *Service) CreateUploadURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fmt.Fprintln(w, url)
+}
+
+// Memory represents a conversation memory with vector similarity
+type Memory struct {
+	ID             string    `json:"id"`
+	Score          float32   `json:"score"`
+	Prompt         string    `json:"prompt"`
+	Response       string    `json:"response"`
+	Timestamp      time.Time `json:"timestamp"`
+	VectorDistance float32   `json:"vector_distance"`
+}
+
+// GetMemoriesResponse represents the response for getting memories
+type GetMemoriesResponse struct {
+	Memories []Memory `json:"memories"`
+}
+
+// - MARK: get-memories
+
+func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
+	slog := slog.With("handler", "GetMemories")
+	tok, err := s.auth.VerifyToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var req rq.GetMemoriesV1
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.Error("Failed to decode request body", "error", err)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	err = tok.Check(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	slog = slog.With("user_id", req.UserID)
+	if len(req.Vector) == 0 {
+		slog.Error("Missing required parameters",
+			"userId", req.UserID != "",
+			"vector", req.Vector != nil)
+		http.Error(w, "Missing required parameters", http.StatusBadRequest)
+		return
+	}
+	if len(req.Vector) > 2048 {
+		slog.Error("Vector dimension exceeds maximum allowed (2048)")
+		http.Error(w, "Vector dimension exceeds maximum allowed (2048)", http.StatusBadRequest)
+		return
+	}
+	if req.K == 0 {
+		req.K = 5
+	}
+	if req.K > 100 {
+		slog.Error("Number of requested neighbors exceeds maximum allowed (100)")
+		http.Error(w, "Number of requested neighbors exceeds maximum allowed (100)", http.StatusBadRequest)
+		return
+	}
+	app, err := fbase.App(r.Context())
+	if err != nil {
+		slog.Error("Failed to get Firebase app", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	fs, err := app.Firestore(r.Context())
+	if err != nil {
+		slog.Error("Failed to get Firestore client", "error", err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	memoriesRef := fs.Collection("memory").Doc(req.UserID).Collection("conversations")
+	vectorQuery := memoriesRef.FindNearest("embedding_vector",
+		req.Vector,
+		req.K,
+		firestore.DistanceMeasureCosine,
+		&firestore.FindNearestOptions{
+			DistanceResultField: "vector_distance",
+		})
+	querySnapshot, err := vectorQuery.Documents(r.Context()).GetAll()
+	if err != nil {
+		slog.Error("Failed to execute vector query", "error", err)
+		http.Error(w, "Failed to search memories", http.StatusInternalServerError)
+		return
+	}
+
+	memories := make([]Memory, 0, len(querySnapshot))
+	for _, doc := range querySnapshot {
+		var data struct {
+			Prompt         string    `firestore:"prompt"`
+			Response       string    `firestore:"response"`
+			Timestamp      time.Time `firestore:"timestamp"`
+			VectorDistance float32   `firestore:"vector_distance"`
+		}
+		if err := doc.DataTo(&data); err != nil {
+			slog.Error("Failed to unmarshal document", "error", err, "docID", doc.Ref.ID)
+			continue
+		}
+		similarityScore := 1 - data.VectorDistance
+
+		prompt := s.processImageLinks(r.Context(), req.UserID, data.Prompt, slog)
+		response := s.processImageLinks(r.Context(), req.UserID, data.Response, slog)
+
+		memories = append(memories, Memory{
+			ID:             doc.Ref.ID,
+			Score:          similarityScore,
+			Prompt:         prompt,
+			Response:       response,
+			Timestamp:      data.Timestamp,
+			VectorDistance: data.VectorDistance,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(GetMemoriesResponse{Memories: memories})
+}
+
+// processImageLinks replaces image URLs with presigned URLs for backblaze and dalle images
+func (s *Service) processImageLinks(_ context.Context, userID, text string, slog *slog.Logger) string {
+	const (
+		prefixImageAttachment      = "![image]("
+		prefixDittoImageAttachment = "![DittoImage]("
+		suffixImageAttachment      = ")"
+	)
+
+	result := text
+	searchText := text
+
+	// Process ![image]() links
+	for {
+		imgIdx := strings.Index(searchText, prefixImageAttachment)
+		if imgIdx == -1 {
+			break
+		}
+		start := imgIdx + len(prefixImageAttachment)
+		if start >= len(searchText) {
+			break
+		}
+		afterPrefix := searchText[start:]
+		closeIdx := strings.Index(afterPrefix, suffixImageAttachment)
+		if closeIdx == -1 {
+			break
+		}
+		url := afterPrefix[:closeIdx]
+
+		// Calculate absolute positions in the result string
+		resultImgIdx := strings.Index(result, searchText[imgIdx:start+closeIdx+1])
+		if resultImgIdx == -1 {
+			searchText = searchText[start+closeIdx+1:]
+			continue
+		}
+
+		if strings.HasPrefix(url, envs.DITTO_CONTENT_PREFIX) || strings.HasPrefix(url, envs.DALL_E_PREFIX) {
+			presignedURL, err := s.urlCache.Get(url, func() (string, error) {
+				urlParts := strings.Split(url, "?")
+				if len(urlParts) == 0 {
+					return "", fmt.Errorf("failed to get filename from URL: %s", url)
+				}
+				filename := strings.TrimPrefix(urlParts[0], envs.DITTO_CONTENT_PREFIX)
+				filename = strings.TrimPrefix(filename, envs.DALL_E_PREFIX)
+				filename = strings.TrimPrefix(filename, userID+"/")
+				filename = strings.TrimPrefix(filename, "generated-images/") // Remove any existing folder prefix
+				key := fmt.Sprintf("%s/generated-images/%s", userID, filename)
+				objReq, _ := s.s3.GetObjectRequest(&s3.GetObjectInput{
+					Bucket: bucketDittoContent,
+					Key:    aws.String(key),
+				})
+				return objReq.Presign(presignTTL)
+			})
+			if err == nil {
+				slog.Debug("Replaced image URL", "original", url)
+				result = result[:resultImgIdx] + prefixImageAttachment + presignedURL + suffixImageAttachment + result[resultImgIdx+len(prefixImageAttachment)+len(url)+len(suffixImageAttachment):]
+			}
+		}
+		// Always advance the search text
+		searchText = searchText[start+closeIdx+1:]
+	}
+
+	// Process ![DittoImage]() links
+	searchText = result
+	for {
+		imgIdx := strings.Index(searchText, prefixDittoImageAttachment)
+		if imgIdx == -1 {
+			break
+		}
+		start := imgIdx + len(prefixDittoImageAttachment)
+		if start >= len(searchText) {
+			break
+		}
+		afterPrefix := searchText[start:]
+		closeIdx := strings.Index(afterPrefix, suffixImageAttachment)
+		if closeIdx == -1 {
+			break
+		}
+		url := afterPrefix[:closeIdx]
+
+		// Calculate absolute positions in the result string
+		resultImgIdx := strings.Index(result, searchText[imgIdx:start+closeIdx+1])
+		if resultImgIdx == -1 {
+			searchText = searchText[start+closeIdx+1:]
+			continue
+		}
+
+		if strings.HasPrefix(url, envs.DITTO_CONTENT_PREFIX) || strings.HasPrefix(url, envs.DALL_E_PREFIX) {
+			presignedURL, err := s.urlCache.Get(url, func() (string, error) {
+				urlParts := strings.Split(url, "?")
+				if len(urlParts) == 0 {
+					return "", fmt.Errorf("failed to get filename from URL: %s", url)
+				}
+				filename := strings.TrimPrefix(urlParts[0], envs.DITTO_CONTENT_PREFIX)
+				filename = strings.TrimPrefix(filename, envs.DALL_E_PREFIX)
+				filename = strings.TrimPrefix(filename, userID+"/")
+				filename = strings.TrimPrefix(filename, "generated-images/") // Remove any existing folder prefix
+				key := fmt.Sprintf("%s/generated-images/%s", userID, filename)
+				objReq, _ := s.s3.GetObjectRequest(&s3.GetObjectInput{
+					Bucket: bucketDittoContent,
+					Key:    aws.String(key),
+				})
+				return objReq.Presign(presignTTL)
+			})
+			if err == nil {
+				slog.Debug("Replaced DittoImage URL", "new", presignedURL)
+				result = result[:resultImgIdx] + prefixDittoImageAttachment + presignedURL + suffixImageAttachment + result[resultImgIdx+len(prefixDittoImageAttachment)+len(url)+len(suffixImageAttachment):]
+			}
+		}
+		// Always advance the search text
+		searchText = searchText[start+closeIdx+1:]
+	}
+
+	return result
 }
