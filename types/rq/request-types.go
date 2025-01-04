@@ -4,7 +4,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/ditto-assistant/backend/pkg/llm"
+	"github.com/ditto-assistant/backend/pkg/services/llm"
 )
 
 type HasUserID interface {

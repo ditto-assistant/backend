@@ -4,17 +4,16 @@ import (
 	"context"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	firebase "firebase.google.com/go/v4"
-	"firebase.google.com/go/v4/auth"
-	"github.com/ditto-assistant/backend/pkg/core/filestorage"
-	"github.com/ditto-assistant/backend/pkg/core/firestoremem"
+	"github.com/ditto-assistant/backend/cfg/secr"
+	"github.com/ditto-assistant/backend/pkg/services/authfirebase"
+	"github.com/ditto-assistant/backend/pkg/services/filestorage"
+	"github.com/ditto-assistant/backend/pkg/services/firestoremem"
 )
 
 type Client struct {
-	app         *firebase.App
-	Auth        *auth.Client
-	Firestore   *firestore.Client
+	Secr        *secr.Client
+	Auth        *authfirebase.Client
 	Memories    *firestoremem.Client
 	FileStorage *filestorage.Client
 }
@@ -22,6 +21,10 @@ type Client struct {
 const presignTTL = 24 * time.Hour
 
 func NewClient(ctx context.Context) (*Client, error) {
+	secrClient, err := secr.Setup(ctx)
+	if err != nil {
+		return nil, err
+	}
 	app, err := firebase.NewApp(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -30,6 +33,7 @@ func NewClient(ctx context.Context) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	fbAuth := authfirebase.NewClient(auth)
 	firestore, err := app.Firestore(ctx)
 	if err != nil {
 		return nil, err
@@ -39,9 +43,8 @@ func NewClient(ctx context.Context) (*Client, error) {
 		return nil, err
 	}
 	return &Client{
-		app:         app,
-		Auth:        auth,
-		Firestore:   firestore,
+		Secr:        secrClient,
+		Auth:        fbAuth,
 		Memories:    firestoremem.NewClient(firestore, fsClient),
 		FileStorage: fsClient,
 	}, nil

@@ -11,24 +11,25 @@ import (
 	"strings"
 	"time"
 
-	"cloud.google.com/go/firestore"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/ditto-assistant/backend/cfg/envs"
-	"github.com/ditto-assistant/backend/pkg/db"
-	"github.com/ditto-assistant/backend/pkg/db/users"
-	"github.com/ditto-assistant/backend/pkg/llm/openai/dalle"
-	"github.com/ditto-assistant/backend/pkg/search"
-	"github.com/ditto-assistant/backend/pkg/service"
+	"github.com/ditto-assistant/backend/pkg/core"
+	"github.com/ditto-assistant/backend/pkg/services/db"
+	"github.com/ditto-assistant/backend/pkg/services/db/users"
+	"github.com/ditto-assistant/backend/pkg/services/llm/openai/dalle"
+	"github.com/ditto-assistant/backend/pkg/services/search"
 	"github.com/ditto-assistant/backend/types/rp"
 	"github.com/ditto-assistant/backend/types/rq"
+	"github.com/ditto-assistant/backend/types/ty"
 	"github.com/omniaura/mapcache"
 )
 
 const presignTTL = 24 * time.Hour
 
 type Service struct {
-	sc           service.Context
+	sd           ty.ShutdownContext
+	sc           *core.Client
 	searchClient *search.Client
 	s3           *s3.S3
 	urlCache     *mapcache.MapCache[string, string]
@@ -41,15 +42,16 @@ type ServiceClients struct {
 	Dalle        *dalle.Client
 }
 
-func NewService(sc service.Context, setup ServiceClients) *Service {
+func NewService(sd ty.ShutdownContext, sc *core.Client, setup ServiceClients) *Service {
 	urlCache, err := mapcache.New[string, string](
 		mapcache.WithTTL(presignTTL/2),
-		mapcache.WithCleanup(sc.Background, presignTTL),
+		mapcache.WithCleanup(sd.Background, presignTTL),
 	)
 	if err != nil {
 		panic(err)
 	}
 	return &Service{
+		sd:           sd,
 		sc:           sc,
 		searchClient: setup.SearchClient,
 		s3:           setup.S3,
@@ -61,7 +63,7 @@ func NewService(sc service.Context, setup ServiceClients) *Service {
 // - MARK: balance
 
 func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
-	tok, err := s.sc.App.VerifyToken(r)
+	tok, err := s.sc.Auth.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -89,7 +91,7 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 // - MARK: web-search
 
 func (s *Service) WebSearch(w http.ResponseWriter, r *http.Request) {
-	tok, err := s.sc.App.VerifyToken(r)
+	tok, err := s.sc.Auth.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -137,7 +139,7 @@ func (s *Service) WebSearch(w http.ResponseWriter, r *http.Request) {
 // - MARK: generate-image
 
 func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
-	tok, err := s.sc.App.VerifyToken(r)
+	tok, err := s.sc.Auth.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -173,10 +175,10 @@ func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, url)
 	slog.Debug("generated image", "url", url)
 
-	s.sc.ShutdownWG.Add(1)
+	s.sd.WaitGroup.Add(1)
 	go func() {
-		defer s.sc.ShutdownWG.Done()
-		ctx, cancel := context.WithTimeout(s.sc.Background, 15*time.Second)
+		defer s.sd.WaitGroup.Done()
+		ctx, cancel := context.WithTimeout(s.sd.Background, 15*time.Second)
 		defer cancel()
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
@@ -228,7 +230,7 @@ func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
 var bucketDittoContent = aws.String(envs.DITTO_CONTENT_BUCKET)
 
 func (s *Service) PresignURL(w http.ResponseWriter, r *http.Request) {
-	tok, err := s.sc.App.VerifyToken(r)
+	tok, err := s.sc.Auth.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -284,7 +286,7 @@ func (s *Service) PresignURL(w http.ResponseWriter, r *http.Request) {
 // - MARK: create-upload-url
 
 func (s *Service) CreateUploadURL(w http.ResponseWriter, r *http.Request) {
-	tok, err := s.sc.App.VerifyToken(r)
+	tok, err := s.sc.Auth.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -318,7 +320,7 @@ func (s *Service) CreateUploadURL(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 	slog := slog.With("handler", "GetMemories")
-	tok, err := s.sc.App.VerifyToken(r)
+	tok, err := s.sc.Auth.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -355,164 +357,19 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Number of requested neighbors exceeds maximum allowed (100)", http.StatusBadRequest)
 		return
 	}
-	fs := s.sc.App.Firestore
-	memoriesRef := fs.Collection("memory").Doc(req.UserID).Collection("conversations")
-	vectorQuery := memoriesRef.FindNearest("embedding_vector",
-		req.Vector,
-		req.K,
-		firestore.DistanceMeasureCosine,
-		&firestore.FindNearestOptions{
-			DistanceResultField: "vector_distance",
-		})
-	querySnapshot, err := vectorQuery.Documents(r.Context()).GetAll()
+	memories, err := s.sc.Memories.GetMemoriesV2(r.Context(), &rq.GetMemoriesV2{
+		UserID:      req.UserID,
+		StripImages: false,
+		LongTerm: &rq.ParamsLongTermMemoriesV2{
+			Vector:     req.Vector,
+			NodeCounts: []int{req.K},
+		},
+	})
 	if err != nil {
-		slog.Error("Failed to execute vector query", "error", err)
-		http.Error(w, "Failed to search memories", http.StatusInternalServerError)
+		slog.Error("Failed to get memories", "error", err)
+		http.Error(w, "Failed to get memories", http.StatusInternalServerError)
 		return
 	}
-
-	memories := make([]rp.Memory, 0, len(querySnapshot))
-	for _, doc := range querySnapshot {
-		var data struct {
-			Prompt         string    `firestore:"prompt"`
-			Response       string    `firestore:"response"`
-			Timestamp      time.Time `firestore:"timestamp"`
-			VectorDistance float32   `firestore:"vector_distance"`
-		}
-		if err := doc.DataTo(&data); err != nil {
-			slog.Error("Failed to unmarshal document", "error", err, "docID", doc.Ref.ID)
-			continue
-		}
-		similarityScore := 1 - data.VectorDistance
-
-		prompt := s.processImageLinks(r.Context(), req.UserID, data.Prompt, slog)
-		response := s.processImageLinks(r.Context(), req.UserID, data.Response, slog)
-
-		memories = append(memories, rp.Memory{
-			ID:             doc.Ref.ID,
-			Score:          similarityScore,
-			Prompt:         prompt,
-			Response:       response,
-			Timestamp:      data.Timestamp,
-			VectorDistance: data.VectorDistance,
-		})
-	}
-
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(rp.MemoriesV1{Memories: memories})
-}
-
-// processImageLinks replaces image URLs with presigned URLs for backblaze and dalle images
-func (s *Service) processImageLinks(_ context.Context, userID, text string, slog *slog.Logger) string {
-	const (
-		prefixImageAttachment      = "![image]("
-		prefixDittoImageAttachment = "![DittoImage]("
-		suffixImageAttachment      = ")"
-	)
-
-	result := text
-	searchText := text
-
-	// Process ![image]() links
-	for {
-		imgIdx := strings.Index(searchText, prefixImageAttachment)
-		if imgIdx == -1 {
-			break
-		}
-		start := imgIdx + len(prefixImageAttachment)
-		if start >= len(searchText) {
-			break
-		}
-		afterPrefix := searchText[start:]
-		closeIdx := strings.Index(afterPrefix, suffixImageAttachment)
-		if closeIdx == -1 {
-			break
-		}
-		url := afterPrefix[:closeIdx]
-
-		// Calculate absolute positions in the result string
-		resultImgIdx := strings.Index(result, searchText[imgIdx:start+closeIdx+1])
-		if resultImgIdx == -1 {
-			searchText = searchText[start+closeIdx+1:]
-			continue
-		}
-
-		if strings.HasPrefix(url, envs.DITTO_CONTENT_PREFIX) || strings.HasPrefix(url, envs.DALL_E_PREFIX) {
-			presignedURL, err := s.urlCache.Get(url, func() (string, error) {
-				urlParts := strings.Split(url, "?")
-				if len(urlParts) == 0 {
-					return "", fmt.Errorf("failed to get filename from URL: %s", url)
-				}
-				filename := strings.TrimPrefix(urlParts[0], envs.DITTO_CONTENT_PREFIX)
-				filename = strings.TrimPrefix(filename, envs.DALL_E_PREFIX)
-				filename = strings.TrimPrefix(filename, userID+"/")
-				filename = strings.TrimPrefix(filename, "generated-images/") // Remove any existing folder prefix
-				key := fmt.Sprintf("%s/generated-images/%s", userID, filename)
-				objReq, _ := s.s3.GetObjectRequest(&s3.GetObjectInput{
-					Bucket: bucketDittoContent,
-					Key:    aws.String(key),
-				})
-				return objReq.Presign(presignTTL)
-			})
-			if err == nil {
-				slog.Debug("Replaced image URL", "original", url)
-				result = result[:resultImgIdx] + prefixImageAttachment + presignedURL + suffixImageAttachment + result[resultImgIdx+len(prefixImageAttachment)+len(url)+len(suffixImageAttachment):]
-			}
-		}
-		// Always advance the search text
-		searchText = searchText[start+closeIdx+1:]
-	}
-
-	// Process ![DittoImage]() links
-	searchText = result
-	for {
-		imgIdx := strings.Index(searchText, prefixDittoImageAttachment)
-		if imgIdx == -1 {
-			break
-		}
-		start := imgIdx + len(prefixDittoImageAttachment)
-		if start >= len(searchText) {
-			break
-		}
-		afterPrefix := searchText[start:]
-		closeIdx := strings.Index(afterPrefix, suffixImageAttachment)
-		if closeIdx == -1 {
-			break
-		}
-		url := afterPrefix[:closeIdx]
-
-		// Calculate absolute positions in the result string
-		resultImgIdx := strings.Index(result, searchText[imgIdx:start+closeIdx+1])
-		if resultImgIdx == -1 {
-			searchText = searchText[start+closeIdx+1:]
-			continue
-		}
-
-		if strings.HasPrefix(url, envs.DITTO_CONTENT_PREFIX) || strings.HasPrefix(url, envs.DALL_E_PREFIX) {
-			presignedURL, err := s.urlCache.Get(url, func() (string, error) {
-				urlParts := strings.Split(url, "?")
-				if len(urlParts) == 0 {
-					return "", fmt.Errorf("failed to get filename from URL: %s", url)
-				}
-				filename := strings.TrimPrefix(urlParts[0], envs.DITTO_CONTENT_PREFIX)
-				filename = strings.TrimPrefix(filename, envs.DALL_E_PREFIX)
-				filename = strings.TrimPrefix(filename, userID+"/")
-				filename = strings.TrimPrefix(filename, "generated-images/") // Remove any existing folder prefix
-				key := fmt.Sprintf("%s/generated-images/%s", userID, filename)
-				objReq, _ := s.s3.GetObjectRequest(&s3.GetObjectInput{
-					Bucket: bucketDittoContent,
-					Key:    aws.String(key),
-				})
-				return objReq.Presign(presignTTL)
-			})
-			if err == nil {
-				slog.Debug("Replaced DittoImage URL", "new", presignedURL)
-				result = result[:resultImgIdx] + prefixDittoImageAttachment + presignedURL + suffixImageAttachment + result[resultImgIdx+len(prefixDittoImageAttachment)+len(url)+len(suffixImageAttachment):]
-			}
-		}
-		// Always advance the search text
-		searchText = searchText[start+closeIdx+1:]
-	}
-
-	return result
+	json.NewEncoder(w).Encode(rp.MemoriesV1{Memories: memories.LongTerm})
 }

@@ -25,7 +25,7 @@ func (s *Service) Routes(mux *http.ServeMux) {
 
 func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 	slog := slog.With("handler", "GetMemoriesV2")
-	tok, err := s.cl.VerifyToken(r)
+	tok, err := s.cl.Auth.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return

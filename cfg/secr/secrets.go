@@ -25,6 +25,8 @@ var (
 
 func (s SecretID) String() string { return string(s) }
 
+// FetchEnv fetches a secret from the secret manager
+// with the environment name prepended to the secret name
 func (cl *Client) FetchEnv(
 	ctx context.Context,
 	secName string,
@@ -33,6 +35,7 @@ func (cl *Client) FetchEnv(
 	return cl.Fetch(ctx, secName)
 }
 
+// Fetch fetches a secret from the secret manager
 func (cl *Client) Fetch(
 	ctx context.Context,
 	secName string,
