@@ -13,16 +13,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/credentials"
-	"github.com/aws/aws-sdk-go/aws/session"
-	"github.com/aws/aws-sdk-go/service/s3"
-	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/cfg/secr"
-	"github.com/ditto-assistant/backend/pkg/api/v1"
+	apiv1 "github.com/ditto-assistant/backend/pkg/api/v1"
+	apiv2 "github.com/ditto-assistant/backend/pkg/api/v2"
+	"github.com/ditto-assistant/backend/pkg/core"
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/db/users"
-	"github.com/ditto-assistant/backend/pkg/fbase"
 	"github.com/ditto-assistant/backend/pkg/llm"
 	"github.com/ditto-assistant/backend/pkg/llm/claude"
 	"github.com/ditto-assistant/backend/pkg/llm/gemini"
@@ -61,17 +57,12 @@ func main() {
 	if err := db.Setup(bgCtx, &shutdownWG, db.ModeCloud); err != nil {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
-	auth, err := fbase.NewAuth(bgCtx)
+	coreSvc, err := core.NewClient(bgCtx)
 	if err != nil {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
 	mux := http.NewServeMux()
-	s3Config := &aws.Config{
-		Credentials: credentials.NewStaticCredentials(envs.BACKBLAZE_KEY_ID, secr.BACKBLAZE_API_KEY.String(), ""),
-		Region:      aws.String(envs.DITTO_CONTENT_REGION),
-		Endpoint:    aws.String(envs.DITTO_CONTENT_ENDPOINT),
-	}
-	mySession, err := session.NewSession(s3Config)
+
 	if err != nil {
 		log.Fatalf("failed to create session: %v", err)
 	}
@@ -79,17 +70,17 @@ func main() {
 		Background: bgCtx,
 		ShutdownWG: &shutdownWG,
 		Secr:       secrClient,
+		App:        coreSvc,
 	}
-	s3Client := s3.New(mySession)
+
 	searchClient := search.NewClient(
 		search.WithService(brave.NewService(svcCtx)),
 		search.WithService(google.NewService(svcCtx)),
 	)
 	dalleClient := dalle.NewClient(secr.OPENAI_DALLE_API_KEY.String(), llm.HttpClient)
-	v1Client := api.NewService(svcCtx, api.ServiceClients{
-		Auth:         auth,
+	v1Client := apiv1.NewService(svcCtx, apiv1.ServiceClients{
 		SearchClient: searchClient,
-		S3:           s3Client,
+		S3:           coreSvc.FileStorage.S3,
 		Dalle:        dalleClient,
 	})
 	stripeClient := stripe.NewClient(svcCtx)
@@ -102,9 +93,12 @@ func main() {
 	mux.HandleFunc("POST /v1/stripe/checkout-session", stripeClient.CreateCheckoutSession)
 	mux.HandleFunc("POST /v1/stripe/webhook", stripeClient.HandleWebhook)
 
+	v2Client := apiv2.NewService(coreSvc)
+	v2Client.Routes(mux)
+
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := auth.VerifyToken(r)
+		tok, err := coreSvc.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -223,7 +217,7 @@ func main() {
 
 	// - MARK: embed
 	mux.HandleFunc("POST /v1/embed", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := auth.VerifyToken(r)
+		tok, err := coreSvc.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -282,7 +276,7 @@ func main() {
 
 	// - MARK: search-examples
 	mux.HandleFunc("POST /v1/search-examples", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := auth.VerifyToken(r)
+		tok, err := coreSvc.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return

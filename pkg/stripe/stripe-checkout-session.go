@@ -8,7 +8,6 @@ import (
 	"sync"
 
 	"github.com/ditto-assistant/backend/cfg/envs"
-	"github.com/ditto-assistant/backend/pkg/fbase"
 	"github.com/ditto-assistant/backend/pkg/service"
 	"github.com/stripe/stripe-go/v80"
 	"github.com/stripe/stripe-go/v80/checkout/session"
@@ -70,29 +69,20 @@ func (cl *Client) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
 	// Get authorization from form
 	authHeader := r.FormValue("authorization")
 	r.Header.Set("Authorization", authHeader)
-
-	fbAuth, err := fbase.NewAuth(r.Context())
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	tok, err := fbAuth.VerifyToken(r)
+	tok, err := cl.sc.App.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-
 	// Parse form values into our request struct
 	usd, err := strconv.ParseInt(r.FormValue("usd"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid USD amount", http.StatusBadRequest)
 		return
 	}
-
 	bod := requestCreateCheckoutSession{
 		UserID:     r.FormValue("userID"),
 		Email:      ptr(r.FormValue("email")),
@@ -100,7 +90,6 @@ func (cl *Client) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) 
 		CancelURL:  ptr(r.FormValue("cancelURL")),
 		USD:        usd,
 	}
-
 	err = tok.Check(bod)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)

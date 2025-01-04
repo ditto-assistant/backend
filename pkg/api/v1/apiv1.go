@@ -17,10 +17,10 @@ import (
 	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/db/users"
-	"github.com/ditto-assistant/backend/pkg/fbase"
 	"github.com/ditto-assistant/backend/pkg/llm/openai/dalle"
 	"github.com/ditto-assistant/backend/pkg/search"
 	"github.com/ditto-assistant/backend/pkg/service"
+	"github.com/ditto-assistant/backend/types/rp"
 	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/omniaura/mapcache"
 )
@@ -29,7 +29,6 @@ const presignTTL = 24 * time.Hour
 
 type Service struct {
 	sc           service.Context
-	auth         fbase.Auth
 	searchClient *search.Client
 	s3           *s3.S3
 	urlCache     *mapcache.MapCache[string, string]
@@ -37,7 +36,6 @@ type Service struct {
 }
 
 type ServiceClients struct {
-	Auth         fbase.Auth
 	SearchClient *search.Client
 	S3           *s3.S3
 	Dalle        *dalle.Client
@@ -53,7 +51,6 @@ func NewService(sc service.Context, setup ServiceClients) *Service {
 	}
 	return &Service{
 		sc:           sc,
-		auth:         setup.Auth,
 		searchClient: setup.SearchClient,
 		s3:           setup.S3,
 		urlCache:     urlCache,
@@ -64,7 +61,7 @@ func NewService(sc service.Context, setup ServiceClients) *Service {
 // - MARK: balance
 
 func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
-	tok, err := s.auth.VerifyToken(r)
+	tok, err := s.sc.App.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -92,7 +89,7 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 // - MARK: web-search
 
 func (s *Service) WebSearch(w http.ResponseWriter, r *http.Request) {
-	tok, err := s.auth.VerifyToken(r)
+	tok, err := s.sc.App.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -140,7 +137,7 @@ func (s *Service) WebSearch(w http.ResponseWriter, r *http.Request) {
 // - MARK: generate-image
 
 func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
-	tok, err := s.auth.VerifyToken(r)
+	tok, err := s.sc.App.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -231,7 +228,7 @@ func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
 var bucketDittoContent = aws.String(envs.DITTO_CONTENT_BUCKET)
 
 func (s *Service) PresignURL(w http.ResponseWriter, r *http.Request) {
-	tok, err := s.auth.VerifyToken(r)
+	tok, err := s.sc.App.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -287,7 +284,7 @@ func (s *Service) PresignURL(w http.ResponseWriter, r *http.Request) {
 // - MARK: create-upload-url
 
 func (s *Service) CreateUploadURL(w http.ResponseWriter, r *http.Request) {
-	tok, err := s.auth.VerifyToken(r)
+	tok, err := s.sc.App.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -317,26 +314,11 @@ func (s *Service) CreateUploadURL(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, url)
 }
 
-// Memory represents a conversation memory with vector similarity
-type Memory struct {
-	ID             string    `json:"id"`
-	Score          float32   `json:"score"`
-	Prompt         string    `json:"prompt"`
-	Response       string    `json:"response"`
-	Timestamp      time.Time `json:"timestamp"`
-	VectorDistance float32   `json:"vector_distance"`
-}
-
-// GetMemoriesResponse represents the response for getting memories
-type GetMemoriesResponse struct {
-	Memories []Memory `json:"memories"`
-}
-
 // - MARK: get-memories
 
 func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 	slog := slog.With("handler", "GetMemories")
-	tok, err := s.auth.VerifyToken(r)
+	tok, err := s.sc.App.VerifyToken(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -373,18 +355,7 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Number of requested neighbors exceeds maximum allowed (100)", http.StatusBadRequest)
 		return
 	}
-	app, err := fbase.App(r.Context())
-	if err != nil {
-		slog.Error("Failed to get Firebase app", "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	fs, err := app.Firestore(r.Context())
-	if err != nil {
-		slog.Error("Failed to get Firestore client", "error", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
+	fs := s.sc.App.Firestore
 	memoriesRef := fs.Collection("memory").Doc(req.UserID).Collection("conversations")
 	vectorQuery := memoriesRef.FindNearest("embedding_vector",
 		req.Vector,
@@ -400,7 +371,7 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	memories := make([]Memory, 0, len(querySnapshot))
+	memories := make([]rp.Memory, 0, len(querySnapshot))
 	for _, doc := range querySnapshot {
 		var data struct {
 			Prompt         string    `firestore:"prompt"`
@@ -417,7 +388,7 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 		prompt := s.processImageLinks(r.Context(), req.UserID, data.Prompt, slog)
 		response := s.processImageLinks(r.Context(), req.UserID, data.Response, slog)
 
-		memories = append(memories, Memory{
+		memories = append(memories, rp.Memory{
 			ID:             doc.Ref.ID,
 			Score:          similarityScore,
 			Prompt:         prompt,
@@ -428,7 +399,7 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(GetMemoriesResponse{Memories: memories})
+	json.NewEncoder(w).Encode(rp.MemoriesV1{Memories: memories})
 }
 
 // processImageLinks replaces image URLs with presigned URLs for backblaze and dalle images
