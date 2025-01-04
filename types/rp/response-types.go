@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/ditto-assistant/backend/cfg/envs"
-	"github.com/ditto-assistant/backend/pkg/core/filestorage"
+	"github.com/ditto-assistant/backend/pkg/services/filestorage"
 	"golang.org/x/sync/errgroup"
 )
 
