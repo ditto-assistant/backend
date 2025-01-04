@@ -14,7 +14,7 @@ require (
 	github.com/tursodatabase/go-libsql v0.0.0-20241113154718-293fe7f21b08
 	golang.org/x/oauth2 v0.24.0
 	golang.org/x/sync v0.10.0
-	google.golang.org/api v0.213.0
+	google.golang.org/api v0.214.0
 )
 
 require (
