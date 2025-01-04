@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/pkg/core/filestorage"
 	"golang.org/x/sync/errgroup"
 )
@@ -39,13 +40,14 @@ func (BalanceV1) Zeroes() BalanceV1 {
 
 // Memory represents a conversation memory with vector similarity
 type Memory struct {
-	ID              string    `json:"id"`
-	Score           float32   `json:"score"`
-	Prompt          string    `json:"prompt" firestore:"prompt"`
-	Response        string    `json:"response" firestore:"response"`
-	Timestamp       time.Time `json:"timestamp" firestore:"timestamp"`
-	VectorDistance  float32   `json:"vector_distance" firestore:"vector_distance"`
-	EmbeddingVector []float32 `json:"-" firestore:"embedding_vector"`
+	ID             string    `json:"id"`
+	Score          float32   `json:"score"`
+	Prompt         string    `json:"prompt" firestore:"prompt"`
+	Response       string    `json:"response" firestore:"response"`
+	Timestamp      time.Time `json:"timestamp" firestore:"timestamp"`
+	VectorDistance float32   `json:"vector_distance" firestore:"vector_distance"`
+	// Will be used for depth-based vector memory
+	// EmbeddingVector firestore.Vector32 `json:"-" firestore:"embedding_vector"`
 }
 
 // MemoriesV1 represents the response for getting memories
@@ -96,11 +98,15 @@ func (mem *Memory) StripImages() {
 	TrimStuff(&mem.Response, "![DittoImage](", ")", nil)
 }
 
-func (mem *Memory) PresignImages(ctx context.Context, cl *filestorage.Client) error {
+func (mem *Memory) PresignImages(ctx context.Context, userID string, cl *filestorage.Client) error {
 	group, ctx := errgroup.WithContext(ctx)
 	group.Go(func() error {
 		return TrimStuff(&mem.Prompt, "![image](", ")", func(url *string) error {
-			presignedURL, err := cl.PresignURL(ctx, mem.ID, *url)
+			if !strings.HasPrefix(*url, envs.DITTO_CONTENT_PREFIX) &&
+				!strings.HasPrefix(*url, envs.DALL_E_PREFIX) {
+				return nil
+			}
+			presignedURL, err := cl.PresignURL(ctx, userID, *url)
 			if err != nil {
 				return err
 			}
@@ -110,7 +116,11 @@ func (mem *Memory) PresignImages(ctx context.Context, cl *filestorage.Client) er
 	})
 	group.Go(func() error {
 		return TrimStuff(&mem.Response, "![DittoImage](", ")", func(url *string) error {
-			presignedURL, err := cl.PresignURL(ctx, mem.ID, *url)
+			if !strings.HasPrefix(*url, envs.DITTO_CONTENT_PREFIX) &&
+				!strings.HasPrefix(*url, envs.DALL_E_PREFIX) {
+				return nil
+			}
+			presignedURL, err := cl.PresignURL(ctx, userID, *url)
 			if err != nil {
 				return err
 			}
@@ -170,16 +180,22 @@ func (mem *Memory) String() string {
 func (m MemoriesV2) Bytes() []byte {
 	var b bytes.Buffer
 	if len(m.LongTerm) > 0 {
-		b.WriteString("Long Term Memories:\n")
+		b.WriteString("## Long Term Memory\n")
+		b.WriteString("- Most relevant prompt/response pairs from the user's prompt history are indexed using cosine similarity and are shown below.\n")
+		b.WriteString("<LongTermMemory>\n")
 		for _, mem := range m.LongTerm {
 			b.WriteString(mem.String())
 		}
+		b.WriteString("</LongTermMemory>\n\n")
 	}
 	if len(m.ShortTerm) > 0 {
-		b.WriteString("Short Term Memories:\n")
+		b.WriteString("## Short Term Memory\n")
+		b.WriteString("- Most recent prompt/response pairs are shown below.\n")
+		b.WriteString("<ShortTermMemory>\n")
 		for _, mem := range m.ShortTerm {
 			b.WriteString(mem.String())
 		}
+		b.WriteString("</ShortTermMemory>\n\n")
 	}
 	return b.Bytes()
 }

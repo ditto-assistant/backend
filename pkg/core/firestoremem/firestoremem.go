@@ -67,11 +67,12 @@ func (cl *Client) getShort(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Mem
 		if err := doc.DataTo(&mem); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal memory: %s, err: %w", doc.Ref.ID, err)
 		}
+		mem.ID = doc.Ref.ID
 		mem.FormatResponse()
 		if req.StripImages {
 			mem.StripImages()
 		} else {
-			err := mem.PresignImages(ctx, cl.fsClient)
+			err := mem.PresignImages(ctx, req.UserID, cl.fsClient)
 			if err != nil {
 				return nil, fmt.Errorf("failed to presign images: %w", err)
 			}
@@ -109,11 +110,12 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 		if err := doc.DataTo(&mem); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal memory: %s, err: %w", doc.Ref.ID, err)
 		}
+		mem.ID = doc.Ref.ID
 		mem.FormatResponse()
 		if req.StripImages {
 			mem.StripImages()
 		} else {
-			err := mem.PresignImages(ctx, cl.fsClient)
+			err := mem.PresignImages(ctx, req.UserID, cl.fsClient)
 			if err != nil {
 				return nil, fmt.Errorf("failed to presign images: %w", err)
 			}

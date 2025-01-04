@@ -7,7 +7,6 @@ import (
 	"cloud.google.com/go/firestore"
 	firebase "firebase.google.com/go/v4"
 	"firebase.google.com/go/v4/auth"
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/ditto-assistant/backend/pkg/core/filestorage"
 	"github.com/ditto-assistant/backend/pkg/core/firestoremem"
 )
@@ -16,7 +15,6 @@ type Client struct {
 	app         *firebase.App
 	Auth        *auth.Client
 	Firestore   *firestore.Client
-	S3          *s3.S3
 	Memories    *firestoremem.Client
 	FileStorage *filestorage.Client
 }

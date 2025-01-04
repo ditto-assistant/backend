@@ -80,7 +80,7 @@ func main() {
 	dalleClient := dalle.NewClient(secr.OPENAI_DALLE_API_KEY.String(), llm.HttpClient)
 	v1Client := apiv1.NewService(svcCtx, apiv1.ServiceClients{
 		SearchClient: searchClient,
-		S3:           coreSvc.S3,
+		S3:           coreSvc.FileStorage.S3,
 		Dalle:        dalleClient,
 	})
 	stripeClient := stripe.NewClient(svcCtx)
