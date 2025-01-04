@@ -1,7 +1,6 @@
-package fbase
+package core
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -11,25 +10,9 @@ import (
 	"github.com/ditto-assistant/backend/types/rq"
 )
 
-type Auth struct {
-	client *auth.Client
-}
-
-func NewAuth(ctx context.Context) (Auth, error) {
-	app, err := App(ctx)
-	if err != nil {
-		return Auth{}, err
-	}
-	client, err := app.Auth(ctx)
-	if err != nil {
-		return Auth{}, err
-	}
-	return Auth{client: client}, nil
-}
-
 type AuthToken auth.Token
 
-func (a *Auth) VerifyToken(r *http.Request) (*AuthToken, error) {
+func (a *Client) VerifyToken(r *http.Request) (*AuthToken, error) {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
 		return nil, errors.New("authorization header is required but not provided")
@@ -39,7 +22,7 @@ func (a *Auth) VerifyToken(r *http.Request) (*AuthToken, error) {
 		return nil, errors.New("invalid authorization header format")
 	}
 	token := authHeader[len(bearerPrefix):]
-	authToken, err := a.client.VerifyIDToken(r.Context(), token)
+	authToken, err := a.Auth.VerifyIDToken(r.Context(), token)
 	if err != nil {
 		return nil, fmt.Errorf("error verifying ID token: %v", err)
 	}

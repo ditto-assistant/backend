@@ -108,3 +108,21 @@ type GetMemoriesV1 struct {
 }
 
 func (g GetMemoriesV1) GetUserID() string { return g.UserID }
+
+type GetMemoriesV2 struct {
+	UserID      string                     `json:"userID"`
+	LongTerm    *ParamsLongTermMemoriesV2  `json:"longTerm"`
+	ShortTerm   *ParamsShortTermMemoriesV2 `json:"shortTerm"`
+	StripImages bool                       `json:"stripImages"`
+}
+
+type ParamsLongTermMemoriesV2 struct {
+	Vector     []float32 `json:"vector"`
+	NodeCounts []int     `json:"nodeCounts"`
+}
+
+type ParamsShortTermMemoriesV2 struct {
+	K int `json:"k"`
+}
+
+func (g *GetMemoriesV2) GetUserID() string { return g.UserID }
