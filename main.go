@@ -20,9 +20,9 @@ import (
 	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/api/v1"
+	"github.com/ditto-assistant/backend/pkg/core"
 	"github.com/ditto-assistant/backend/pkg/db"
 	"github.com/ditto-assistant/backend/pkg/db/users"
-	"github.com/ditto-assistant/backend/pkg/fbase"
 	"github.com/ditto-assistant/backend/pkg/llm"
 	"github.com/ditto-assistant/backend/pkg/llm/claude"
 	"github.com/ditto-assistant/backend/pkg/llm/gemini"
@@ -61,7 +61,7 @@ func main() {
 	if err := db.Setup(bgCtx, &shutdownWG, db.ModeCloud); err != nil {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
-	firebaseApp, err := fbase.NewApp(bgCtx)
+	firebaseApp, err := core.NewService(bgCtx)
 	if err != nil {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}

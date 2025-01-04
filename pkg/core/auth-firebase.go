@@ -1,4 +1,4 @@
-package fbase
+package core
 
 import (
 	"errors"
@@ -12,7 +12,7 @@ import (
 
 type AuthToken auth.Token
 
-func (a *FirebaseApp) VerifyToken(r *http.Request) (*AuthToken, error) {
+func (a *Service) VerifyToken(r *http.Request) (*AuthToken, error) {
 	authHeader := r.Header.Get("Authorization")
 	if authHeader == "" {
 		return nil, errors.New("authorization header is required but not provided")
