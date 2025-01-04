@@ -20,6 +20,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/llm/openai/dalle"
 	"github.com/ditto-assistant/backend/pkg/search"
 	"github.com/ditto-assistant/backend/pkg/service"
+	"github.com/ditto-assistant/backend/types/rp"
 	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/omniaura/mapcache"
 )
@@ -313,21 +314,6 @@ func (s *Service) CreateUploadURL(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, url)
 }
 
-// Memory represents a conversation memory with vector similarity
-type Memory struct {
-	ID             string    `json:"id"`
-	Score          float32   `json:"score"`
-	Prompt         string    `json:"prompt"`
-	Response       string    `json:"response"`
-	Timestamp      time.Time `json:"timestamp"`
-	VectorDistance float32   `json:"vector_distance"`
-}
-
-// GetMemoriesResponse represents the response for getting memories
-type GetMemoriesResponse struct {
-	Memories []Memory `json:"memories"`
-}
-
 // - MARK: get-memories
 
 func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
@@ -385,7 +371,7 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	memories := make([]Memory, 0, len(querySnapshot))
+	memories := make([]rp.Memory, 0, len(querySnapshot))
 	for _, doc := range querySnapshot {
 		var data struct {
 			Prompt         string    `firestore:"prompt"`
@@ -402,7 +388,7 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 		prompt := s.processImageLinks(r.Context(), req.UserID, data.Prompt, slog)
 		response := s.processImageLinks(r.Context(), req.UserID, data.Response, slog)
 
-		memories = append(memories, Memory{
+		memories = append(memories, rp.Memory{
 			ID:             doc.Ref.ID,
 			Score:          similarityScore,
 			Prompt:         prompt,
@@ -413,7 +399,7 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(GetMemoriesResponse{Memories: memories})
+	json.NewEncoder(w).Encode(rp.MemoriesV1{Memories: memories})
 }
 
 // processImageLinks replaces image URLs with presigned URLs for backblaze and dalle images

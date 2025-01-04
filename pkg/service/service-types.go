@@ -12,5 +12,5 @@ type Context struct {
 	Background context.Context
 	ShutdownWG *sync.WaitGroup
 	Secr       *secr.Client
-	App        *core.Service
+	App        *core.Client
 }
