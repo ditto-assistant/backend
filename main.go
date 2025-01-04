@@ -61,7 +61,7 @@ func main() {
 	if err := db.Setup(bgCtx, &shutdownWG, db.ModeCloud); err != nil {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
-	auth, err := fbase.NewAuth(bgCtx)
+	firebaseApp, err := fbase.NewApp(bgCtx)
 	if err != nil {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
@@ -79,6 +79,7 @@ func main() {
 		Background: bgCtx,
 		ShutdownWG: &shutdownWG,
 		Secr:       secrClient,
+		App:        firebaseApp,
 	}
 	s3Client := s3.New(mySession)
 	searchClient := search.NewClient(
@@ -87,7 +88,6 @@ func main() {
 	)
 	dalleClient := dalle.NewClient(secr.OPENAI_DALLE_API_KEY.String(), llm.HttpClient)
 	v1Client := api.NewService(svcCtx, api.ServiceClients{
-		Auth:         auth,
 		SearchClient: searchClient,
 		S3:           s3Client,
 		Dalle:        dalleClient,
@@ -104,7 +104,7 @@ func main() {
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := auth.VerifyToken(r)
+		tok, err := firebaseApp.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -223,7 +223,7 @@ func main() {
 
 	// - MARK: embed
 	mux.HandleFunc("POST /v1/embed", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := auth.VerifyToken(r)
+		tok, err := firebaseApp.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -282,7 +282,7 @@ func main() {
 
 	// - MARK: search-examples
 	mux.HandleFunc("POST /v1/search-examples", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := auth.VerifyToken(r)
+		tok, err := firebaseApp.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return

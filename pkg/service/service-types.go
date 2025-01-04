@@ -5,10 +5,12 @@ import (
 	"sync"
 
 	"github.com/ditto-assistant/backend/cfg/secr"
+	"github.com/ditto-assistant/backend/pkg/fbase"
 )
 
 type Context struct {
 	Background context.Context
 	ShutdownWG *sync.WaitGroup
 	Secr       *secr.Client
+	App        *fbase.FirebaseApp
 }
