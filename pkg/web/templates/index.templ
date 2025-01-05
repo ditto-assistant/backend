@@ -107,6 +107,22 @@ templ head() {
                     }
                 });
                 console.log('HTMX token configuration initialized');
+
+            document.body.addEventListener('htmx:sseMessage', function(evt) {
+				console.log('SSE Message:', evt.detail.data);
+			});
+
+			document.body.addEventListener('htmx:sseError', function(evt) {
+				console.error('SSE Error:', evt.detail.error);
+			});
+
+			document.body.addEventListener('htmx:sseOpen', function(evt) {
+				console.log('SSE connection established');
+			});
+
+			document.body.addEventListener('htmx:sseClose', function(evt) {
+				console.log('SSE connection closed:', evt.detail);
+			});
             });
         </script>
     </head>
