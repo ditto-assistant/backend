@@ -2,11 +2,58 @@ package templates
 
 templ Index() {
     @head()
-	<div>Hello, World</div>
-    <button hx-get="/templates/v1/hello" hx-target="#content">Click me</button>
-    <button hx-get="/templates/v1/login">Login</button>
-    <div id="content"></div>
+    <div class="container">
+        <div class="header">
+            <h1>Hello, World</h1>
+            <button onclick="handleLogout()" class="logout-button">Logout</button>
+        </div>
+        <div class="actions">
+            <button hx-get="/templates/v1/hello" hx-target="#content">Click me</button>
+            <button hx-get="/templates/v1/login">Login</button>
+            <button hx-get="/templates/v1/text-stream" hx-target="#content">Try Streaming Demo</button>
+        </div>
+        <div id="content"></div>
+        <style>
+            .container {
+                padding: 20px;
+            }
+            .header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 20px;
+            }
+            .actions {
+                margin-bottom: 20px;
+            }
+            .actions button {
+                margin-right: 10px;
+            }
+            .logout-button {
+                padding: 8px 16px;
+                background-color: #ff4444;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+            }
+            .logout-button:hover {
+                background-color: #cc0000;
+            }
+        </style>
+    </div>
     @firebaseAuthSetup()
+    <script>
+        function handleLogout() {
+            const auth = firebase.auth();
+            auth.signOut().then(() => {
+                console.log('User signed out');
+                window.location.href = '/templates/v1/login';
+            }).catch((error) => {
+                console.error('Error signing out:', error);
+            });
+        }
+    </script>
 }
 
 templ Login() {
@@ -45,6 +92,7 @@ templ Login() {
 templ head() {
     <head>
         <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+        <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
         <script>
             // Wait for DOM to be fully loaded before setting up HTMX configuration
             document.addEventListener('DOMContentLoaded', function() {

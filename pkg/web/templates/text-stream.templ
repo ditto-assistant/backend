@@ -1,0 +1,54 @@
+package templates
+
+templ TextStream() {
+	<div class="stream-container">
+		<h1>SSE Text Streaming Demo</h1>
+		<div id="initial-message">Waiting for text updates...</div>
+		<div 
+			id="stream-content"
+			hx-ext="sse" 
+			sse-connect="/templates/v1/text-stream/events" 
+			sse-swap="text-update"
+			sse-close="close"
+			hx-swap="beforeend"
+			class="stream-content"
+		></div>
+		<style>
+			.stream-container {
+				padding: 20px;
+			}
+			.stream-content {
+				padding: 20px;
+				border: 1px solid #ddd;
+				border-radius: 4px;
+				margin: 20px 0;
+				min-height: 100px;
+			}
+			.stream-line {
+				margin: 5px 0;
+				padding: 5px;
+				border-bottom: 1px solid #eee;
+			}
+		</style>
+		<script>
+			document.body.addEventListener('htmx:sseMessage', function(evt) {
+				console.log('SSE Message:', evt.detail.data);
+			});
+
+			document.body.addEventListener('htmx:sseError', function(evt) {
+				console.error('SSE Error:', evt.detail.error);
+			});
+
+			document.body.addEventListener('htmx:sseOpen', function(evt) {
+				console.log('SSE connection established');
+			});
+
+			document.body.addEventListener('htmx:sseClose', function(evt) {
+				console.log('SSE connection closed:', evt.detail);
+				if (evt.detail.type === 'message') {
+					console.log('Stream completed normally');
+				}
+			});
+		</script>
+	</div>
+}
