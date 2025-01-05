@@ -5,6 +5,7 @@ go 1.23.3
 require (
 	cloud.google.com/go/firestore v1.17.0
 	firebase.google.com/go/v4 v4.15.1
+	github.com/a-h/templ v0.3.819
 	github.com/aws/aws-sdk-go v1.55.5
 	github.com/firebase/genkit/go v0.2.1
 	github.com/omniaura/mapcache v0.1.1
