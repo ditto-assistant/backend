@@ -17,24 +17,24 @@ import (
 	apiv1 "github.com/ditto-assistant/backend/pkg/api/v1"
 	apiv2 "github.com/ditto-assistant/backend/pkg/api/v2"
 	"github.com/ditto-assistant/backend/pkg/core"
-	"github.com/ditto-assistant/backend/pkg/db"
-	"github.com/ditto-assistant/backend/pkg/db/users"
-	"github.com/ditto-assistant/backend/pkg/llm"
-	"github.com/ditto-assistant/backend/pkg/llm/claude"
-	"github.com/ditto-assistant/backend/pkg/llm/gemini"
-	"github.com/ditto-assistant/backend/pkg/llm/googai"
-	"github.com/ditto-assistant/backend/pkg/llm/llama"
-	"github.com/ditto-assistant/backend/pkg/llm/mistral"
-	"github.com/ditto-assistant/backend/pkg/llm/openai"
-	"github.com/ditto-assistant/backend/pkg/llm/openai/dalle"
-	"github.com/ditto-assistant/backend/pkg/llm/openai/gpt"
 	"github.com/ditto-assistant/backend/pkg/middleware"
-	"github.com/ditto-assistant/backend/pkg/search"
-	"github.com/ditto-assistant/backend/pkg/search/brave"
-	"github.com/ditto-assistant/backend/pkg/search/google"
-	"github.com/ditto-assistant/backend/pkg/service"
-	"github.com/ditto-assistant/backend/pkg/stripe"
+	"github.com/ditto-assistant/backend/pkg/services/db"
+	"github.com/ditto-assistant/backend/pkg/services/db/users"
+	"github.com/ditto-assistant/backend/pkg/services/llm"
+	"github.com/ditto-assistant/backend/pkg/services/llm/claude"
+	"github.com/ditto-assistant/backend/pkg/services/llm/gemini"
+	"github.com/ditto-assistant/backend/pkg/services/llm/googai"
+	"github.com/ditto-assistant/backend/pkg/services/llm/llama"
+	"github.com/ditto-assistant/backend/pkg/services/llm/mistral"
+	"github.com/ditto-assistant/backend/pkg/services/llm/openai"
+	"github.com/ditto-assistant/backend/pkg/services/llm/openai/dalle"
+	"github.com/ditto-assistant/backend/pkg/services/llm/openai/gpt"
+	"github.com/ditto-assistant/backend/pkg/services/search"
+	"github.com/ditto-assistant/backend/pkg/services/search/brave"
+	"github.com/ditto-assistant/backend/pkg/services/search/google"
+	"github.com/ditto-assistant/backend/pkg/services/stripe"
 	"github.com/ditto-assistant/backend/types/rq"
+	"github.com/ditto-assistant/backend/types/ty"
 	"github.com/firebase/genkit/go/plugins/vertexai"
 )
 
@@ -50,40 +50,29 @@ func main() {
 	}); err != nil {
 		log.Fatal(err)
 	}
-	secrClient, err := secr.Setup(bgCtx)
-	if err != nil {
-		log.Fatalf("failed to initialize secrets: %s", err)
-	}
-	if err := db.Setup(bgCtx, &shutdownWG, db.ModeCloud); err != nil {
-		log.Fatalf("failed to initialize database: %s", err)
+	sdCtx := ty.ShutdownContext{
+		Background: bgCtx,
+		WaitGroup:  &shutdownWG,
 	}
 	coreSvc, err := core.NewClient(bgCtx)
 	if err != nil {
 		log.Fatalf("failed to set up Firebase auth: %v", err)
 	}
+	if err := db.Setup(bgCtx, &shutdownWG, db.ModeCloud); err != nil {
+		log.Fatalf("failed to initialize database: %s", err)
+	}
 	mux := http.NewServeMux()
-
-	if err != nil {
-		log.Fatalf("failed to create session: %v", err)
-	}
-	svcCtx := service.Context{
-		Background: bgCtx,
-		ShutdownWG: &shutdownWG,
-		Secr:       secrClient,
-		App:        coreSvc,
-	}
-
 	searchClient := search.NewClient(
-		search.WithService(brave.NewService(svcCtx)),
-		search.WithService(google.NewService(svcCtx)),
+		search.WithService(brave.NewService(sdCtx, coreSvc.Secr)),
+		search.WithService(google.NewService(sdCtx, coreSvc.Secr)),
 	)
 	dalleClient := dalle.NewClient(secr.OPENAI_DALLE_API_KEY.String(), llm.HttpClient)
-	v1Client := apiv1.NewService(svcCtx, apiv1.ServiceClients{
+	v1Client := apiv1.NewService(sdCtx, coreSvc, apiv1.ServiceClients{
 		SearchClient: searchClient,
 		S3:           coreSvc.FileStorage.S3,
 		Dalle:        dalleClient,
 	})
-	stripeClient := stripe.NewClient(svcCtx)
+	stripeClient := stripe.NewClient(coreSvc.Secr, coreSvc.Auth)
 	mux.HandleFunc("GET /v1/balance", v1Client.Balance)
 	mux.HandleFunc("POST /v1/create-upload-url", v1Client.CreateUploadURL)
 	mux.HandleFunc("POST /v1/google-search", v1Client.WebSearch)
@@ -98,7 +87,7 @@ func main() {
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := coreSvc.VerifyToken(r)
+		tok, err := coreSvc.Auth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -217,7 +206,7 @@ func main() {
 
 	// - MARK: embed
 	mux.HandleFunc("POST /v1/embed", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := coreSvc.VerifyToken(r)
+		tok, err := coreSvc.Auth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -276,7 +265,7 @@ func main() {
 
 	// - MARK: search-examples
 	mux.HandleFunc("POST /v1/search-examples", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := coreSvc.VerifyToken(r)
+		tok, err := coreSvc.Auth.VerifyToken(r)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
