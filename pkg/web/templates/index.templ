@@ -1,0 +1,201 @@
+package templates
+
+templ Index() {
+    @head()
+    <div class="container">
+        <div class="header">
+            <h1>Hello, World</h1>
+            <button onclick="handleLogout()" class="logout-button">Logout</button>
+        </div>
+        <div class="actions">
+            <button hx-get="/templates/v1/hello" hx-target="#content">Click me</button>
+            <button hx-get="/templates/v1/login">Login</button>
+            <button hx-get="/templates/v1/text-stream" hx-target="#content">Try Streaming Demo</button>
+        </div>
+        <div id="content"></div>
+        <style>
+            .container {
+                padding: 20px;
+            }
+            .header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 20px;
+            }
+            .actions {
+                margin-bottom: 20px;
+            }
+            .actions button {
+                margin-right: 10px;
+            }
+            .logout-button {
+                padding: 8px 16px;
+                background-color: #ff4444;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+            }
+            .logout-button:hover {
+                background-color: #cc0000;
+            }
+        </style>
+    </div>
+    @firebaseAuthSetup()
+
+}
+
+templ Login() {
+    <div class={ loginContainer() }>
+        <div class={ loginForm() }>
+            <h1 style="text-align: center; color: #333; margin-bottom: 20px;">Sign In</h1>
+            <button class={ googleButton() } onclick="handleGoogleSignIn()">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" 
+                     style="margin-right: 10px; width: 18px; height: 18px;"/>
+                Sign in with Google
+            </button>
+        </div>
+    </div>
+}
+
+templ head() {
+    <head>
+        <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+        <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
+        <script>
+            // Wait for DOM to be fully loaded before setting up HTMX configuration
+            document.addEventListener('DOMContentLoaded', function() {
+                // Configure HTMX to send the Firebase token with each request
+                document.body.addEventListener("htmx:configRequest", configEvent => {
+                    const token = localStorage.getItem('firebase-token');
+                    if (token) {
+                        console.log('Adding Firebase token to HTMX request');
+                        configEvent.detail.headers['Authorization'] = 'Bearer ' + token;
+                    } else {
+                        console.log('No Firebase token available for HTMX request');
+                    }
+                });
+                console.log('HTMX token configuration initialized');
+
+            document.body.addEventListener('htmx:sseMessage', function(evt) {
+				console.log('SSE Message:', evt.detail.data);
+			});
+
+			document.body.addEventListener('htmx:sseError', function(evt) {
+				console.error('SSE Error:', evt.detail.error);
+			});
+
+			document.body.addEventListener('htmx:sseOpen', function(evt) {
+				console.log('SSE connection established');
+			});
+
+			document.body.addEventListener('htmx:sseClose', function(evt) {
+				console.log('SSE connection closed:', evt.detail);
+			});
+            });
+        </script>
+    </head>
+}
+
+templ firebaseAuthSetup() {
+    <script type="module">
+        // Import the functions you need from the SDKs you need
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-analytics.js";
+        import { getAuth, onAuthStateChanged , GoogleAuthProvider, signInWithPopup, signOut} from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+
+        // Your web app's Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyAoYFV3Br2ryvGVXHJDRzEiixosd2VunU8",
+            authDomain: "ditto-app-dev.firebaseapp.com",
+            projectId: "ditto-app-dev",
+            storageBucket: "ditto-app-dev.appspot.com",
+            messagingSenderId: "22790208601",
+            appId: "1:22790208601:web:b6ee532b2e8a048d1a0548",
+            measurementId: "G-KJFMK6PHML"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const analytics = getAnalytics(app);
+
+        // Initialize Auth and set up listeners
+        const auth = getAuth();
+        console.log('Firebase Auth initialized');
+            
+        // Listen for auth state changes
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                // User is signed in
+                console.log('User signed in:', user.email);
+                user.getIdToken().then((token) => {
+                    console.log('Firebase token obtained and stored in localStorage');
+                    localStorage.setItem('firebase-token', token);
+                });
+            } else {
+                // User is signed out
+                console.log('User signed out, removing token from localStorage');
+                localStorage.removeItem('firebase-token');
+            }
+        });
+
+        window.handleGoogleSignIn = async () => {
+            const auth = getAuth();
+            const provider = new GoogleAuthProvider();
+            
+            try {
+                const result = await signInWithPopup(auth, provider);
+                const user = result.user;
+                console.log('User signed in:', user.email);
+                
+                // After successful sign in, redirect to home
+                window.location.href = '/';
+            } catch (error) {
+                console.error('Error signing in with Google:', error.message);
+                alert('Error signing in with Google. Please try again.');
+            }
+        };
+        window.handleLogout = async () => {
+            const auth = getAuth();
+            await signOut(auth);
+            window.location.href = '/';
+        };
+    </script>
+}
+
+css loginContainer() {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background-color: #23272a;
+}
+
+css loginForm() {
+    background-color: #ffffffb0;
+    box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.1);
+    border-radius: 8px;
+    padding: 40px 20px;
+    width: 100%;
+    max-width: 400px;
+    box-sizing: border-box;
+}
+
+css googleButton() {
+    width: 100%;
+    padding: 12px 15px;
+    background-color: #ffffff;
+    color: #333;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+}

@@ -33,6 +33,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/services/search/brave"
 	"github.com/ditto-assistant/backend/pkg/services/search/google"
 	"github.com/ditto-assistant/backend/pkg/services/stripe"
+	"github.com/ditto-assistant/backend/pkg/web"
 	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/ditto-assistant/backend/types/ty"
 	"github.com/firebase/genkit/go/plugins/vertexai"
@@ -84,6 +85,9 @@ func main() {
 
 	v2Client := apiv2.NewService(coreSvc)
 	v2Client.Routes(mux)
+
+	webClient := web.NewClient(coreSvc)
+	webClient.Routes(mux)
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
