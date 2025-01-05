@@ -41,10 +41,6 @@ func Index() templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<script>\n        function handleLogout() {\n            const auth = firebase.auth();\n            auth.signOut().then(() => {\n                console.log('User signed out');\n                window.location.href = '/templates/v1/login';\n            }).catch((error) => {\n                console.error('Error signing out:', error);\n            });\n        }\n    </script>")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
 		return nil
 	})
 }
@@ -75,7 +71,7 @@ func Login() templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "<div class=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "<div class=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -88,7 +84,7 @@ func Login() templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -97,7 +93,7 @@ func Login() templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "<div class=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "<div class=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -110,7 +106,7 @@ func Login() templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "\"><h1 style=\"text-align: center; color: #333; margin-bottom: 20px;\">Sign In</h1>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "\"><h1 style=\"text-align: center; color: #333; margin-bottom: 20px;\">Sign In</h1>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -119,7 +115,7 @@ func Login() templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<button class=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "<button class=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -132,7 +128,7 @@ func Login() templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "\" onclick=\"handleGoogleSignIn()\"><img src=\"https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg\" style=\"margin-right: 10px; width: 18px; height: 18px;\"> Sign in with Google</button></div></div><script type=\"module\">\n        import { getAuth, GoogleAuthProvider, signInWithPopup } from \"https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js\";\n\n        window.handleGoogleSignIn = async () => {\n            const auth = getAuth();\n            const provider = new GoogleAuthProvider();\n            \n            try {\n                const result = await signInWithPopup(auth, provider);\n                const user = result.user;\n                console.log('User signed in:', user.email);\n                \n                // After successful sign in, redirect to home\n                window.location.href = '/';\n            } catch (error) {\n                console.error('Error signing in with Google:', error.message);\n                alert('Error signing in with Google. Please try again.');\n            }\n        };\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "\" onclick=\"handleGoogleSignIn()\"><img src=\"https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg\" style=\"margin-right: 10px; width: 18px; height: 18px;\"> Sign in with Google</button></div></div>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -161,7 +157,7 @@ func head() templ.Component {
 			templ_7745c5c3_Var9 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "<head><script src=\"https://unpkg.com/htmx.org@2.0.4\" integrity=\"sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+\" crossorigin=\"anonymous\"></script><script src=\"https://unpkg.com/htmx-ext-sse@2.2.2/sse.js\"></script><script>\n            // Wait for DOM to be fully loaded before setting up HTMX configuration\n            document.addEventListener('DOMContentLoaded', function() {\n                // Configure HTMX to send the Firebase token with each request\n                document.body.addEventListener(\"htmx:configRequest\", configEvent => {\n                    const token = localStorage.getItem('firebase-token');\n                    if (token) {\n                        console.log('Adding Firebase token to HTMX request');\n                        configEvent.detail.headers['Authorization'] = 'Bearer ' + token;\n                    } else {\n                        console.log('No Firebase token available for HTMX request');\n                    }\n                });\n                console.log('HTMX token configuration initialized');\n\n            document.body.addEventListener('htmx:sseMessage', function(evt) {\n\t\t\t\tconsole.log('SSE Message:', evt.detail.data);\n\t\t\t});\n\n\t\t\tdocument.body.addEventListener('htmx:sseError', function(evt) {\n\t\t\t\tconsole.error('SSE Error:', evt.detail.error);\n\t\t\t});\n\n\t\t\tdocument.body.addEventListener('htmx:sseOpen', function(evt) {\n\t\t\t\tconsole.log('SSE connection established');\n\t\t\t});\n\n\t\t\tdocument.body.addEventListener('htmx:sseClose', function(evt) {\n\t\t\t\tconsole.log('SSE connection closed:', evt.detail);\n\t\t\t});\n            });\n        </script></head>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "<head><script src=\"https://unpkg.com/htmx.org@2.0.4\" integrity=\"sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+\" crossorigin=\"anonymous\"></script><script src=\"https://unpkg.com/htmx-ext-sse@2.2.2/sse.js\"></script><script>\n            // Wait for DOM to be fully loaded before setting up HTMX configuration\n            document.addEventListener('DOMContentLoaded', function() {\n                // Configure HTMX to send the Firebase token with each request\n                document.body.addEventListener(\"htmx:configRequest\", configEvent => {\n                    const token = localStorage.getItem('firebase-token');\n                    if (token) {\n                        console.log('Adding Firebase token to HTMX request');\n                        configEvent.detail.headers['Authorization'] = 'Bearer ' + token;\n                    } else {\n                        console.log('No Firebase token available for HTMX request');\n                    }\n                });\n                console.log('HTMX token configuration initialized');\n\n            document.body.addEventListener('htmx:sseMessage', function(evt) {\n\t\t\t\tconsole.log('SSE Message:', evt.detail.data);\n\t\t\t});\n\n\t\t\tdocument.body.addEventListener('htmx:sseError', function(evt) {\n\t\t\t\tconsole.error('SSE Error:', evt.detail.error);\n\t\t\t});\n\n\t\t\tdocument.body.addEventListener('htmx:sseOpen', function(evt) {\n\t\t\t\tconsole.log('SSE connection established');\n\t\t\t});\n\n\t\t\tdocument.body.addEventListener('htmx:sseClose', function(evt) {\n\t\t\t\tconsole.log('SSE connection closed:', evt.detail);\n\t\t\t});\n            });\n        </script></head>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -190,7 +186,7 @@ func firebaseAuthSetup() templ.Component {
 			templ_7745c5c3_Var10 = templ.NopComponent
 		}
 		ctx = templ.ClearChildren(ctx)
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, "<script type=\"module\">\n        // Import the functions you need from the SDKs you need\n        import { initializeApp } from \"https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js\";\n        import { getAnalytics } from \"https://www.gstatic.com/firebasejs/11.1.0/firebase-analytics.js\";\n        import { getAuth, onAuthStateChanged } from \"https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js\";\n\n        // Your web app's Firebase configuration\n        const firebaseConfig = {\n            apiKey: \"AIzaSyAoYFV3Br2ryvGVXHJDRzEiixosd2VunU8\",\n            authDomain: \"ditto-app-dev.firebaseapp.com\",\n            projectId: \"ditto-app-dev\",\n            storageBucket: \"ditto-app-dev.appspot.com\",\n            messagingSenderId: \"22790208601\",\n            appId: \"1:22790208601:web:b6ee532b2e8a048d1a0548\",\n            measurementId: \"G-KJFMK6PHML\"\n        };\n\n        // Initialize Firebase\n        const app = initializeApp(firebaseConfig);\n        const analytics = getAnalytics(app);\n\n        // Initialize Auth and set up listeners\n        const auth = getAuth();\n        console.log('Firebase Auth initialized');\n            \n        // Listen for auth state changes\n        onAuthStateChanged(auth, (user) => {\n            if (user) {\n                // User is signed in\n                console.log('User signed in:', user.email);\n                user.getIdToken().then((token) => {\n                    console.log('Firebase token obtained and stored in localStorage');\n                    localStorage.setItem('firebase-token', token);\n                });\n            } else {\n                // User is signed out\n                console.log('User signed out, removing token from localStorage');\n                localStorage.removeItem('firebase-token');\n            }\n        });\n    </script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "<script type=\"module\">\n        // Import the functions you need from the SDKs you need\n        import { initializeApp } from \"https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js\";\n        import { getAnalytics } from \"https://www.gstatic.com/firebasejs/11.1.0/firebase-analytics.js\";\n        import { getAuth, onAuthStateChanged , GoogleAuthProvider, signInWithPopup, signOut} from \"https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js\";\n\n        // Your web app's Firebase configuration\n        const firebaseConfig = {\n            apiKey: \"AIzaSyAoYFV3Br2ryvGVXHJDRzEiixosd2VunU8\",\n            authDomain: \"ditto-app-dev.firebaseapp.com\",\n            projectId: \"ditto-app-dev\",\n            storageBucket: \"ditto-app-dev.appspot.com\",\n            messagingSenderId: \"22790208601\",\n            appId: \"1:22790208601:web:b6ee532b2e8a048d1a0548\",\n            measurementId: \"G-KJFMK6PHML\"\n        };\n\n        // Initialize Firebase\n        const app = initializeApp(firebaseConfig);\n        const analytics = getAnalytics(app);\n\n        // Initialize Auth and set up listeners\n        const auth = getAuth();\n        console.log('Firebase Auth initialized');\n            \n        // Listen for auth state changes\n        onAuthStateChanged(auth, (user) => {\n            if (user) {\n                // User is signed in\n                console.log('User signed in:', user.email);\n                user.getIdToken().then((token) => {\n                    console.log('Firebase token obtained and stored in localStorage');\n                    localStorage.setItem('firebase-token', token);\n                });\n            } else {\n                // User is signed out\n                console.log('User signed out, removing token from localStorage');\n                localStorage.removeItem('firebase-token');\n            }\n        });\n\n        window.handleGoogleSignIn = async () => {\n            const auth = getAuth();\n            const provider = new GoogleAuthProvider();\n            \n            try {\n                const result = await signInWithPopup(auth, provider);\n                const user = result.user;\n                console.log('User signed in:', user.email);\n                \n                // After successful sign in, redirect to home\n                window.location.href = '/';\n            } catch (error) {\n                console.error('Error signing in with Google:', error.message);\n                alert('Error signing in with Google. Please try again.');\n            }\n        };\n        window.handleLogout = async () => {\n            const auth = getAuth();\n            await signOut(auth);\n            window.location.href = '/';\n        };\n    </script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

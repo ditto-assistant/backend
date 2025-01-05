@@ -43,17 +43,7 @@ templ Index() {
         </style>
     </div>
     @firebaseAuthSetup()
-    <script>
-        function handleLogout() {
-            const auth = firebase.auth();
-            auth.signOut().then(() => {
-                console.log('User signed out');
-                window.location.href = '/templates/v1/login';
-            }).catch((error) => {
-                console.error('Error signing out:', error);
-            });
-        }
-    </script>
+
 }
 
 templ Login() {
@@ -67,26 +57,6 @@ templ Login() {
             </button>
         </div>
     </div>
-    <script type="module">
-        import { getAuth, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
-
-        window.handleGoogleSignIn = async () => {
-            const auth = getAuth();
-            const provider = new GoogleAuthProvider();
-            
-            try {
-                const result = await signInWithPopup(auth, provider);
-                const user = result.user;
-                console.log('User signed in:', user.email);
-                
-                // After successful sign in, redirect to home
-                window.location.href = '/';
-            } catch (error) {
-                console.error('Error signing in with Google:', error.message);
-                alert('Error signing in with Google. Please try again.');
-            }
-        };
-    </script>
 }
 
 templ head() {
@@ -133,7 +103,7 @@ templ firebaseAuthSetup() {
         // Import the functions you need from the SDKs you need
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
         import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-analytics.js";
-        import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+        import { getAuth, onAuthStateChanged , GoogleAuthProvider, signInWithPopup, signOut} from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
 
         // Your web app's Firebase configuration
         const firebaseConfig = {
@@ -169,6 +139,28 @@ templ firebaseAuthSetup() {
                 localStorage.removeItem('firebase-token');
             }
         });
+
+        window.handleGoogleSignIn = async () => {
+            const auth = getAuth();
+            const provider = new GoogleAuthProvider();
+            
+            try {
+                const result = await signInWithPopup(auth, provider);
+                const user = result.user;
+                console.log('User signed in:', user.email);
+                
+                // After successful sign in, redirect to home
+                window.location.href = '/';
+            } catch (error) {
+                console.error('Error signing in with Google:', error.message);
+                alert('Error signing in with Google. Please try again.');
+            }
+        };
+        window.handleLogout = async () => {
+            const auth = getAuth();
+            await signOut(auth);
+            window.location.href = '/';
+        };
     </script>
 }
 

@@ -26,10 +26,8 @@ templ TextStream() {
 				font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
 				line-height: 1.6;
 			}
-			.stream-content h1,
-			.stream-content h2,
-			.stream-content h3 {
-				margin: 1em 0 0.5em 0;
+			.stream-content h1, h2, h3 {
+				margin: 1em 0 0.5em;
 			}
 			.stream-content code {
 				background-color: #f6f8fa;
@@ -42,6 +40,11 @@ templ TextStream() {
 				padding: 16px;
 				border-radius: 6px;
 				overflow: auto;
+			}
+			.stream-content pre code {
+				padding: 0;
+				margin: 0;
+				background-color: transparent;
 			}
 			.stream-content blockquote {
 				border-left: 4px solid #ddd;
