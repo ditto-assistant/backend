@@ -1,28 +1,62 @@
 package web
 
 import (
-	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
-	"time"
+	"unicode"
 
 	"github.com/a-h/templ"
 	"github.com/ditto-assistant/backend/pkg/core"
+	"github.com/ditto-assistant/backend/pkg/services/llm"
+	"github.com/ditto-assistant/backend/pkg/services/llm/llama"
 	"github.com/ditto-assistant/backend/pkg/web/templates"
+	"github.com/ditto-assistant/backend/types/rq"
 	datastar "github.com/starfederation/datastar/sdk/go"
-	"github.com/yuin/goldmark"
 )
+
+// chunkSize is the target size for each chunk of text
+const chunkSize = 50
+
+// breakIntoChunks splits text into chunks, trying to break at word boundaries
+func breakIntoChunks(text string, targetSize int) []string {
+	if len(text) <= targetSize {
+		return []string{text}
+	}
+
+	var chunks []string
+	start := 0
+	for start < len(text) {
+		end := start + targetSize
+		if end > len(text) {
+			chunks = append(chunks, text[start:])
+			break
+		}
+
+		// Try to find a word boundary
+		for end > start && end < len(text) && !unicode.IsSpace(rune(text[end])) {
+			end--
+		}
+		if end == start {
+			// No word boundary found, just split at targetSize
+			end = start + targetSize
+		}
+
+		chunks = append(chunks, text[start:end])
+		start = end
+		// Include all characters, even whitespace
+	}
+	return chunks
+}
 
 type Client struct {
 	cl *core.Client
-	md goldmark.Markdown
 }
 
 func NewClient(cl *core.Client) *Client {
 	return &Client{
 		cl: cl,
-		md: goldmark.New(),
 	}
 }
 
@@ -31,63 +65,63 @@ func (cl *Client) Routes(mux *http.ServeMux) {
 
 	mux.HandleFunc("/templates/v1/text-stream", func(w http.ResponseWriter, r *http.Request) {
 		repeat, _ := strconv.ParseBool(r.URL.Query().Get("repeat"))
+		var dStarData struct {
+			Prompt string `json:"prompt"`
+		}
+		if err := json.Unmarshal([]byte(r.URL.Query().Get("datastar")), &dStarData); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
 		// Create a new Datastar SSE instance
 		sse := datastar.NewSSE(w, r)
 		if !repeat {
 			sse.MergeFragmentTempl(templates.TextStream())
 		}
 
-		// Initialize signals
-		sse.MergeSignals([]byte(`{
-			"streamStatus": "waiting",
-			"currentLine": 0,
-			"totalLines": 5
-		}`))
+		var rsp llm.StreamResponse
+		llama.ModelLlama32.Prompt(r.Context(), rq.PromptV1{
+			Model:      llm.ModelLlama32,
+			UserPrompt: dStarData.Prompt,
+		}, &rsp)
 
-		// Example markdown content
-		markdownLines := []string{
-			"# Streaming Markdown\nThis is line **1** with some *italic* text.",
-			"## Code Example\n```python\nprint('Hello from line 2!')\nprint('Hello from line 2!')\n```",
-			"> This is line 3 with a blockquote\n\nAnd some regular text.",
-			"* Line 4 is a list item\n* With multiple points\n* And formatting **bold**",
-			"### Final Line\nLine 5 with a [link](https://example.com) and `inline code`",
-		}
+		i := 0
+		for token := range rsp.Text {
+			if token.Err != nil {
+				sse.MergeSignals([]byte(fmt.Sprintf(`{
+					"_streamStatus": "error",
+					"_error": %q
+				}`, token.Err)))
+				continue
+			}
 
-		// Send messages
-		for i, markdown := range markdownLines {
 			select {
 			case <-r.Context().Done():
 				return
 			default:
-				var buf bytes.Buffer
-				if err := cl.md.Convert([]byte(markdown), &buf); err != nil {
-					sse.MergeFragments(fmt.Sprintf("<div class=\"error\">Error rendering markdown: %s</div>", err), datastar.WithSelectorID("stream-content"))
-					continue
-				}
-
-				// Update signals
+				// Break token into smaller chunks
+				// chunks := breakIntoChunks(token.Ok, chunkSize)
+				// for _, chunk := range chunks {
+				// i++
+				// Update signals with new content and status
 				sse.MergeSignals([]byte(fmt.Sprintf(`{
-					"streamStatus": "streaming",
-					"currentLine": %d
-				}`, i+1)))
-
-				// Merge the new content
-				sse.MergeFragments(buf.String(), datastar.WithMergeAppend(), datastar.WithSelectorID("stream-content"))
-				time.Sleep(100 * time.Millisecond)
+						"_streamStatus": "streaming",
+						"_currentLine": %d,
+						"_content": %q
+					}`, i, token.Ok)))
+				// time.Sleep(50 * time.Millisecond) // Reduced delay for smoother updates
+				// }
 			}
 		}
 
-		// Send completion message
-		var buf bytes.Buffer
-		cl.md.Convert([]byte("## 🎉 Streaming Complete!\n*All markdown content has been delivered successfully.*"), &buf)
+		// Add completion message to content
+		finalMessage := "\n\n## 🎉 Streaming Complete!\n*All markdown content has been delivered successfully.*"
 
-		// Update final status
-		sse.MergeSignals([]byte(`{
-			"streamStatus": "complete",
-			"currentLine": 5
-		}`))
-
-		// Send final content
-		sse.MergeFragments(buf.String(), datastar.WithMergeAppend(), datastar.WithSelectorID("stream-content"))
+		// Send final status and content
+		sse.MergeSignals([]byte(fmt.Sprintf(`{
+			"_streamStatus": "complete",
+			"_currentLine": %d,
+			"_content": %q
+		}`, i, finalMessage)))
 	})
 }

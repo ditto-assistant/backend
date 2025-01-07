@@ -7,14 +7,14 @@ templ Index() {
 			<h1>Hello, World</h1>
 			<button onclick="handleLogout()" class="logout-button">Logout</button>
 		</div>
-		<div class="actions">
+		<div class="actions" data-signals="{prompt: 'Write a short story about a cat using lots of markdown formatting.'}">
 			<button hx-get="/templates/v1/hello" hx-target="#content">Click me</button>
 			<button hx-get="/templates/v1/login">Login</button>
 			<button
 				data-on-click="@get('/templates/v1/text-stream')"
-				data-indicator-loading
 				class="stream-button"
 			>Try Streaming Demo</button>
+			<input data-bind-prompt/>
 		</div>
 		<div id="content"></div>
 		<style>
@@ -83,6 +83,7 @@ templ Login() {
 templ head() {
 	<head>
 		<script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-beta.1/bundles/datastar.js"></script>
+		@markdownScript()
 	</head>
 }
 
@@ -186,4 +187,142 @@ css googleButton() {
 	align-items: center;
 	justify-content: center;
 	text-decoration: none;
+}
+
+templ markdownScript() {
+	<script type="module">
+			// Import the marked library for markdown parsing
+			import { marked } from 'https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js';
+
+			// Define the markdown renderer web component
+			class MarkdownRenderer extends HTMLElement {
+				static get observedAttributes() {
+					return ["content"];
+				}
+
+				constructor() {
+					super();
+					console.log('MarkdownRenderer: Initializing component');
+					this.attachShadow({ mode: 'open' });
+					this.shadowRoot.innerHTML = `
+						<style>
+							:host {
+								display: block;
+								font-family: system-ui, -apple-system, sans-serif;
+								line-height: 1.6;
+								color: #333;
+							}
+							.markdown-content {
+								padding: 1rem;
+							}
+							/* Markdown Styles */
+							h1, h2, h3, h4, h5, h6 {
+								margin-top: 1.5em;
+								margin-bottom: 0.5em;
+								line-height: 1.2;
+							}
+							h1 { font-size: 2em; }
+							h2 { font-size: 1.5em; }
+							h3 { font-size: 1.25em; }
+							p { margin: 1em 0; }
+							code {
+								background: #f4f4f4;
+								padding: 0.2em 0.4em;
+								border-radius: 3px;
+								font-family: monospace;
+								font-size: 0.9em;
+							}
+							pre code {
+								display: block;
+								padding: 1em;
+								overflow-x: auto;
+							}
+							blockquote {
+								border-left: 4px solid #ddd;
+								margin: 0;
+								padding-left: 1em;
+								color: #666;
+							}
+							ul, ol {
+								padding-left: 2em;
+							}
+							img {
+								max-width: 100%;
+								height: auto;
+							}
+							a {
+								color: #0366d6;
+								text-decoration: none;
+							}
+							a:hover {
+								text-decoration: underline;
+							}
+							table {
+								border-collapse: collapse;
+								width: 100%;
+								margin: 1em 0;
+							}
+							th, td {
+								border: 1px solid #ddd;
+								padding: 0.5em;
+								text-align: left;
+							}
+							th {
+								background: #f8f8f8;
+							}
+							strong {
+								font-weight: 600;
+							}
+						</style>
+						<div class="markdown-content"></div>
+					`;
+					this.content = this.shadowRoot.querySelector('.markdown-content');
+					this._currentContent = '';
+					
+					// Configure marked options
+					marked.setOptions({
+						gfm: true,
+						breaks: true,
+						mangle: false,
+						headerIds: false
+					});
+				}
+
+				attributeChangedCallback(name, oldValue, newValue) {
+					console.log('MarkdownRenderer: Attribute changed', {
+						name,
+						oldValue: oldValue?.slice(0, 50) + (oldValue?.length > 50 ? '...' : ''),
+						newValue: newValue?.slice(0, 50) + (newValue?.length > 50 ? '...' : ''),
+						currentContentLength: this._currentContent.length
+					});
+
+					if (name === 'content' && newValue !== oldValue) {
+						const newContent = newValue || '';
+						console.log('MarkdownRenderer: Full re-render', {
+							newContentLength: newContent.length,
+							preview: newContent.slice(0, 50) + (newContent.length > 50 ? '...' : '')
+						});
+                        this._currentContent = this._currentContent + newContent;
+						this.render(this._currentContent);
+					}
+				}
+
+				render(markdown) {
+					if (markdown) {
+						console.log('MarkdownRenderer: Rendering content');
+						try {
+							const html = marked.parse(markdown);
+							this.content.innerHTML = html;
+						} catch (error) {
+							console.error('MarkdownRenderer: Error parsing markdown:', error);
+							this.content.innerHTML = `<div class="error">Error rendering markdown: ${error.message}</div>`;
+						}
+					}
+				}
+			}
+
+			// Register the web component
+			console.log('Registering markdown-renderer component');
+			customElements.define('markdown-renderer', MarkdownRenderer);
+		</script>
 }

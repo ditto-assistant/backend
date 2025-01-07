@@ -1,34 +1,38 @@
 package templates
 
 templ TextStream() {
-	<div id="content" class="stream-container" data-signals="{streamStatus: 'idle', currentLine: 0, totalLines: 5}">
+	<div id="content" class="stream-container" data-signals="{_streamStatus: 'idle', _currentLine: 0, _totalLines: 5, _content: ''}">
 		<h1>Datastar Text Streaming Demo</h1>
 		// Progress indicator
-		<div data-show="$streamStatus != 'idle'" class="progress-bar">
+		<div data-show="$_streamStatus != 'idle'" class="progress-bar">
 			<div class="progress-text">
-				Line <span data-text="$currentLine"></span> of <span data-text="$totalLines"></span>
-			</div>
-		</div>
-		// Stream content
-		<div id="stream-content" class="stream-content">
-			<div data-show="$streamStatus == 'idle'" class="initial-message">
-				Click the button below to start streaming
-			</div>
-			<div data-show="$streamStatus == 'waiting'" class="waiting-message">
-				Waiting for stream to start...
+				Line <span data-text="$_currentLine"></span> of <span data-text="$_totalLines"></span>
 			</div>
 		</div>
 		// Stream control
 		<button
 			data-on-click="@get('/templates/v1/text-stream?repeat=true')"
-			data-indicator-loading
-			data-attr-disabled="$streamStatus != 'idle' && $streamStatus != 'complete'"
+			data-indicator-_loading
+			data-attr-disabled="$_loading"
 			class="stream-button"
 		>
-			<span data-show="$streamStatus == 'idle'">Start Streaming</span>
-			<span data-show="$streamStatus == 'waiting'">Connecting...</span>
-			<span data-show="$streamStatus == 'streaming'">Streaming...</span>
-			<span data-show="$streamStatus == 'complete'">Stream Again</span>
+			<span data-show="$_streamStatus == 'idle'">Start Streaming</span>
+			<span data-show="$_streamStatus == 'waiting'">Connecting...</span>
+			<span data-show="$_streamStatus == 'streaming'">Streaming...</span>
+			<span data-show="$_streamStatus == 'complete'">Stream Again</span>
 		</button>
+		// Stream content
+		<div id="stream-content" class="stream-content">
+			<div data-show="$_streamStatus == 'idle'" class="initial-message">
+				Click the button below to start streaming
+			</div>
+			<div data-show="$_streamStatus == 'waiting'" class="waiting-message">
+				Waiting for stream to start...
+			</div>
+			<markdown-renderer
+				data-attr-content="$_content"
+				data-show="$_streamStatus != 'idle' && $_streamStatus != 'waiting'"
+			></markdown-renderer>
+		</div>
 	</div>
 }
