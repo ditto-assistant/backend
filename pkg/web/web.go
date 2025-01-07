@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"fmt"
 	"net/http"
-	"strings"
+	"strconv"
 	"time"
 
 	"github.com/a-h/templ"
 	"github.com/ditto-assistant/backend/pkg/core"
 	"github.com/ditto-assistant/backend/pkg/web/templates"
+	datastar "github.com/starfederation/datastar/sdk/go"
 	"github.com/yuin/goldmark"
 )
 
@@ -25,24 +26,23 @@ func NewClient(cl *core.Client) *Client {
 	}
 }
 
-func writeSSELines(w http.ResponseWriter, content string) {
-	// Split content into lines and write each with data: prefix
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		fmt.Fprintf(w, "data: %s\n", line)
-	}
-	fmt.Fprintf(w, "\n")
-}
-
 func (cl *Client) Routes(mux *http.ServeMux) {
 	mux.Handle("/", templ.Handler(templates.Index()))
-	mux.Handle("/templates/v1/login", templ.Handler(templates.Login()))
-	mux.Handle("/templates/v1/text-stream", templ.Handler(templates.TextStream()))
-	mux.HandleFunc("/templates/v1/text-stream/events", func(w http.ResponseWriter, r *http.Request) {
-		// Set headers for SSE
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
+
+	mux.HandleFunc("/templates/v1/text-stream", func(w http.ResponseWriter, r *http.Request) {
+		repeat, _ := strconv.ParseBool(r.URL.Query().Get("repeat"))
+		// Create a new Datastar SSE instance
+		sse := datastar.NewSSE(w, r)
+		if !repeat {
+			sse.MergeFragmentTempl(templates.TextStream())
+		}
+
+		// Initialize signals
+		sse.MergeSignals([]byte(`{
+			"streamStatus": "waiting",
+			"currentLine": 0,
+			"totalLines": 5
+		}`))
 
 		// Example markdown content
 		markdownLines := []string{
@@ -54,22 +54,25 @@ func (cl *Client) Routes(mux *http.ServeMux) {
 		}
 
 		// Send messages
-		for _, markdown := range markdownLines {
+		for i, markdown := range markdownLines {
 			select {
 			case <-r.Context().Done():
 				return
 			default:
 				var buf bytes.Buffer
 				if err := cl.md.Convert([]byte(markdown), &buf); err != nil {
-					fmt.Fprintf(w, "event: text-update\n")
-					writeSSELines(w, fmt.Sprintf("<div class=\"error\">Error rendering markdown: %s</div>", err))
-					w.(http.Flusher).Flush()
+					sse.MergeFragments(fmt.Sprintf("<div class=\"error\">Error rendering markdown: %s</div>", err), datastar.WithSelectorID("stream-content"))
 					continue
 				}
 
-				fmt.Fprintf(w, "event: text-update\n")
-				writeSSELines(w, buf.String())
-				w.(http.Flusher).Flush()
+				// Update signals
+				sse.MergeSignals([]byte(fmt.Sprintf(`{
+					"streamStatus": "streaming",
+					"currentLine": %d
+				}`, i+1)))
+
+				// Merge the new content
+				sse.MergeFragments(buf.String(), datastar.WithMergeAppend(), datastar.WithSelectorID("stream-content"))
 				time.Sleep(100 * time.Millisecond)
 			}
 		}
@@ -77,13 +80,14 @@ func (cl *Client) Routes(mux *http.ServeMux) {
 		// Send completion message
 		var buf bytes.Buffer
 		cl.md.Convert([]byte("## 🎉 Streaming Complete!\n*All markdown content has been delivered successfully.*"), &buf)
-		fmt.Fprintf(w, "event: text-update\n")
-		writeSSELines(w, buf.String())
-		w.(http.Flusher).Flush()
 
-		// Send the close event
-		fmt.Fprintf(w, "event: close\ndata: close\n\n")
-		w.(http.Flusher).Flush()
+		// Update final status
+		sse.MergeSignals([]byte(`{
+			"streamStatus": "complete",
+			"currentLine": 5
+		}`))
+
+		// Send final content
+		sse.MergeFragments(buf.String(), datastar.WithMergeAppend(), datastar.WithSelectorID("stream-content"))
 	})
-	mux.Handle("/templates/v1/hello", templ.Handler(templates.Hello("Peyton")))
 }

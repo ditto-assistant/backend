@@ -10,7 +10,11 @@ templ Index() {
         <div class="actions">
             <button hx-get="/templates/v1/hello" hx-target="#content">Click me</button>
             <button hx-get="/templates/v1/login">Login</button>
-            <button hx-get="/templates/v1/text-stream" hx-target="#content">Try Streaming Demo</button>
+            <button 
+                data-on-click="@get('/templates/v1/text-stream')"
+                data-indicator-loading
+                class="stream-button"
+            >Try Streaming Demo</button>
         </div>
         <div id="content"></div>
         <style>
@@ -40,10 +44,25 @@ templ Index() {
             .logout-button:hover {
                 background-color: #cc0000;
             }
+            .stream-button {
+                padding: 8px 16px;
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                transition: background-color 0.3s ease;
+            }
+            .stream-button:hover {
+                background-color: #45a049;
+            }
+            .stream-button[data-loading] {
+                background-color: #cccccc;
+                cursor: wait;
+            }
         </style>
     </div>
     @firebaseAuthSetup()
-
 }
 
 templ Login() {
@@ -61,40 +80,7 @@ templ Login() {
 
 templ head() {
     <head>
-        <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
-        <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
-        <script>
-            // Wait for DOM to be fully loaded before setting up HTMX configuration
-            document.addEventListener('DOMContentLoaded', function() {
-                // Configure HTMX to send the Firebase token with each request
-                document.body.addEventListener("htmx:configRequest", configEvent => {
-                    const token = localStorage.getItem('firebase-token');
-                    if (token) {
-                        console.log('Adding Firebase token to HTMX request');
-                        configEvent.detail.headers['Authorization'] = 'Bearer ' + token;
-                    } else {
-                        console.log('No Firebase token available for HTMX request');
-                    }
-                });
-                console.log('HTMX token configuration initialized');
-
-            document.body.addEventListener('htmx:sseMessage', function(evt) {
-				console.log('SSE Message:', evt.detail.data);
-			});
-
-			document.body.addEventListener('htmx:sseError', function(evt) {
-				console.error('SSE Error:', evt.detail.error);
-			});
-
-			document.body.addEventListener('htmx:sseOpen', function(evt) {
-				console.log('SSE connection established');
-			});
-
-			document.body.addEventListener('htmx:sseClose', function(evt) {
-				console.log('SSE connection closed:', evt.detail);
-			});
-            });
-        </script>
+        <script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-beta.1/bundles/datastar.js"></script>
     </head>
 }
 
