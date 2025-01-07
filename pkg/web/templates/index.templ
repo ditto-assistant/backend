@@ -1,23 +1,23 @@
 package templates
 
 templ Index() {
-    @head()
-    <div class="container">
-        <div class="header">
-            <h1>Hello, World</h1>
-            <button onclick="handleLogout()" class="logout-button">Logout</button>
-        </div>
-        <div class="actions">
-            <button hx-get="/templates/v1/hello" hx-target="#content">Click me</button>
-            <button hx-get="/templates/v1/login">Login</button>
-            <button 
-                data-on-click="@get('/templates/v1/text-stream')"
-                data-indicator-loading
-                class="stream-button"
-            >Try Streaming Demo</button>
-        </div>
-        <div id="content"></div>
-        <style>
+	@head()
+	<div class="container">
+		<div class="header">
+			<h1>Hello, World</h1>
+			<button onclick="handleLogout()" class="logout-button">Logout</button>
+		</div>
+		<div class="actions">
+			<button hx-get="/templates/v1/hello" hx-target="#content">Click me</button>
+			<button hx-get="/templates/v1/login">Login</button>
+			<button
+				data-on-click="@get('/templates/v1/text-stream')"
+				data-indicator-loading
+				class="stream-button"
+			>Try Streaming Demo</button>
+		</div>
+		<div id="content"></div>
+		<style>
             .container {
                 padding: 20px;
             }
@@ -61,31 +61,33 @@ templ Index() {
                 cursor: wait;
             }
         </style>
-    </div>
-    @firebaseAuthSetup()
+	</div>
+	@firebaseAuthSetup()
 }
 
 templ Login() {
-    <div class={ loginContainer() }>
-        <div class={ loginForm() }>
-            <h1 style="text-align: center; color: #333; margin-bottom: 20px;">Sign In</h1>
-            <button class={ googleButton() } onclick="handleGoogleSignIn()">
-                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" 
-                     style="margin-right: 10px; width: 18px; height: 18px;"/>
-                Sign in with Google
-            </button>
-        </div>
-    </div>
+	<div class={ loginContainer() }>
+		<div class={ loginForm() }>
+			<h1 style="text-align: center; color: #333; margin-bottom: 20px;">Sign In</h1>
+			<button class={ googleButton() } onclick="handleGoogleSignIn()">
+				<img
+					src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+					style="margin-right: 10px; width: 18px; height: 18px;"
+				/>
+				Sign in with Google
+			</button>
+		</div>
+	</div>
 }
 
 templ head() {
-    <head>
-        <script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-beta.1/bundles/datastar.js"></script>
-    </head>
+	<head>
+		<script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-beta.1/bundles/datastar.js"></script>
+	</head>
 }
 
 templ firebaseAuthSetup() {
-    <script type="module">
+	<script type="module">
         // Import the functions you need from the SDKs you need
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
         import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-analytics.js";
@@ -151,37 +153,37 @@ templ firebaseAuthSetup() {
 }
 
 css loginContainer() {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    min-height: 100vh;
-    background-color: #23272a;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	min-height: 100vh;
+	background-color: #23272a;
 }
 
 css loginForm() {
-    background-color: #ffffffb0;
-    box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.1);
-    border-radius: 8px;
-    padding: 40px 20px;
-    width: 100%;
-    max-width: 400px;
-    box-sizing: border-box;
+	background-color: #ffffffb0;
+	box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.1);
+	border-radius: 8px;
+	padding: 40px 20px;
+	width: 100%;
+	max-width: 400px;
+	box-sizing: border-box;
 }
 
 css googleButton() {
-    width: 100%;
-    padding: 12px 15px;
-    background-color: #ffffff;
-    color: #333;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 16px;
-    font-weight: bold;
-    cursor: pointer;
-    transition: background-color 0.3s ease;
-    margin-top: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-decoration: none;
+	width: 100%;
+	padding: 12px 15px;
+	background-color: #ffffff;
+	color: #333;
+	border: 1px solid #ddd;
+	border-radius: 4px;
+	font-size: 16px;
+	font-weight: bold;
+	cursor: pointer;
+	transition: background-color 0.3s ease;
+	margin-top: 10px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	text-decoration: none;
 }
