@@ -14,7 +14,6 @@ require (
 	github.com/stretchr/testify v1.10.0
 	github.com/stripe/stripe-go/v80 v80.2.1
 	github.com/tursodatabase/go-libsql v0.0.0-20241113154718-293fe7f21b08
-	github.com/yuin/goldmark v1.7.8
 	golang.org/x/oauth2 v0.24.0
 	golang.org/x/sync v0.10.0
 	google.golang.org/api v0.214.0
