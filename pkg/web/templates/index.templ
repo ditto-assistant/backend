@@ -1,0 +1,328 @@
+package templates
+
+templ Index() {
+	@head()
+	<div class="container">
+		<div class="header">
+			<h1>Hello, World</h1>
+			<button onclick="handleLogout()" class="logout-button">Logout</button>
+		</div>
+		<div class="actions" data-signals="{prompt: 'Write a short story about a cat using lots of markdown formatting.'}">
+			<button hx-get="/templates/v1/hello" hx-target="#content">Click me</button>
+			<button hx-get="/templates/v1/login">Login</button>
+			<button
+				data-on-click="@get('/templates/v1/text-stream')"
+				class="stream-button"
+			>Try Streaming Demo</button>
+			<input data-bind-prompt/>
+		</div>
+		<div id="content"></div>
+		<style>
+            .container {
+                padding: 20px;
+            }
+            .header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 20px;
+            }
+            .actions {
+                margin-bottom: 20px;
+            }
+            .actions button {
+                margin-right: 10px;
+            }
+            .logout-button {
+                padding: 8px 16px;
+                background-color: #ff4444;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+            }
+            .logout-button:hover {
+                background-color: #cc0000;
+            }
+            .stream-button {
+                padding: 8px 16px;
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                transition: background-color 0.3s ease;
+            }
+            .stream-button:hover {
+                background-color: #45a049;
+            }
+            .stream-button[data-loading] {
+                background-color: #cccccc;
+                cursor: wait;
+            }
+        </style>
+	</div>
+	@firebaseAuthSetup()
+}
+
+templ Login() {
+	<div class={ loginContainer() }>
+		<div class={ loginForm() }>
+			<h1 style="text-align: center; color: #333; margin-bottom: 20px;">Sign In</h1>
+			<button class={ googleButton() } onclick="handleGoogleSignIn()">
+				<img
+					src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+					style="margin-right: 10px; width: 18px; height: 18px;"
+				/>
+				Sign in with Google
+			</button>
+		</div>
+	</div>
+}
+
+templ head() {
+	<head>
+		<script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-beta.1/bundles/datastar.js"></script>
+		@markdownScript()
+	</head>
+}
+
+templ firebaseAuthSetup() {
+	<script type="module">
+        // Import the functions you need from the SDKs you need
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
+        import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-analytics.js";
+        import { getAuth, onAuthStateChanged , GoogleAuthProvider, signInWithPopup, signOut} from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+
+        // Your web app's Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyAoYFV3Br2ryvGVXHJDRzEiixosd2VunU8",
+            authDomain: "ditto-app-dev.firebaseapp.com",
+            projectId: "ditto-app-dev",
+            storageBucket: "ditto-app-dev.appspot.com",
+            messagingSenderId: "22790208601",
+            appId: "1:22790208601:web:b6ee532b2e8a048d1a0548",
+            measurementId: "G-KJFMK6PHML"
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const analytics = getAnalytics(app);
+
+        // Initialize Auth and set up listeners
+        const auth = getAuth();
+        console.log('Firebase Auth initialized');
+            
+        // Listen for auth state changes
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                // User is signed in
+                console.log('User signed in:', user.email);
+                user.getIdToken().then((token) => {
+                    console.log('Firebase token obtained and stored in localStorage');
+                    localStorage.setItem('firebase-token', token);
+                });
+            } else {
+                // User is signed out
+                console.log('User signed out, removing token from localStorage');
+                localStorage.removeItem('firebase-token');
+            }
+        });
+
+        window.handleGoogleSignIn = async () => {
+            const auth = getAuth();
+            const provider = new GoogleAuthProvider();
+            
+            try {
+                const result = await signInWithPopup(auth, provider);
+                const user = result.user;
+                console.log('User signed in:', user.email);
+                
+                // After successful sign in, redirect to home
+                window.location.href = '/';
+            } catch (error) {
+                console.error('Error signing in with Google:', error.message);
+                alert('Error signing in with Google. Please try again.');
+            }
+        };
+        window.handleLogout = async () => {
+            const auth = getAuth();
+            await signOut(auth);
+            window.location.href = '/';
+        };
+    </script>
+}
+
+css loginContainer() {
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	min-height: 100vh;
+	background-color: #23272a;
+}
+
+css loginForm() {
+	background-color: #ffffffb0;
+	box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.1);
+	border-radius: 8px;
+	padding: 40px 20px;
+	width: 100%;
+	max-width: 400px;
+	box-sizing: border-box;
+}
+
+css googleButton() {
+	width: 100%;
+	padding: 12px 15px;
+	background-color: #ffffff;
+	color: #333;
+	border: 1px solid #ddd;
+	border-radius: 4px;
+	font-size: 16px;
+	font-weight: bold;
+	cursor: pointer;
+	transition: background-color 0.3s ease;
+	margin-top: 10px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	text-decoration: none;
+}
+
+templ markdownScript() {
+	<script type="module">
+			// Import the marked library for markdown parsing
+			import { marked } from 'https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js';
+
+			// Define the markdown renderer web component
+			class MarkdownRenderer extends HTMLElement {
+				static get observedAttributes() {
+					return ["content"];
+				}
+
+				constructor() {
+					super();
+					console.log('MarkdownRenderer: Initializing component');
+					this.attachShadow({ mode: 'open' });
+					this.shadowRoot.innerHTML = `
+						<style>
+							:host {
+								display: block;
+								font-family: system-ui, -apple-system, sans-serif;
+								line-height: 1.6;
+								color: #333;
+							}
+							.markdown-content {
+								padding: 1rem;
+							}
+							/* Markdown Styles */
+							h1, h2, h3, h4, h5, h6 {
+								margin-top: 1.5em;
+								margin-bottom: 0.5em;
+								line-height: 1.2;
+							}
+							h1 { font-size: 2em; }
+							h2 { font-size: 1.5em; }
+							h3 { font-size: 1.25em; }
+							p { margin: 1em 0; }
+							code {
+								background: #f4f4f4;
+								padding: 0.2em 0.4em;
+								border-radius: 3px;
+								font-family: monospace;
+								font-size: 0.9em;
+							}
+							pre code {
+								display: block;
+								padding: 1em;
+								overflow-x: auto;
+							}
+							blockquote {
+								border-left: 4px solid #ddd;
+								margin: 0;
+								padding-left: 1em;
+								color: #666;
+							}
+							ul, ol {
+								padding-left: 2em;
+							}
+							img {
+								max-width: 100%;
+								height: auto;
+							}
+							a {
+								color: #0366d6;
+								text-decoration: none;
+							}
+							a:hover {
+								text-decoration: underline;
+							}
+							table {
+								border-collapse: collapse;
+								width: 100%;
+								margin: 1em 0;
+							}
+							th, td {
+								border: 1px solid #ddd;
+								padding: 0.5em;
+								text-align: left;
+							}
+							th {
+								background: #f8f8f8;
+							}
+							strong {
+								font-weight: 600;
+							}
+						</style>
+						<div class="markdown-content"></div>
+					`;
+					this.content = this.shadowRoot.querySelector('.markdown-content');
+					this._currentContent = '';
+					
+					// Configure marked options
+					marked.setOptions({
+						gfm: true,
+						breaks: true,
+						mangle: false,
+						headerIds: false
+					});
+				}
+
+				attributeChangedCallback(name, oldValue, newValue) {
+					console.log('MarkdownRenderer: Attribute changed', {
+						name,
+						oldValue: oldValue?.slice(0, 50) + (oldValue?.length > 50 ? '...' : ''),
+						newValue: newValue?.slice(0, 50) + (newValue?.length > 50 ? '...' : ''),
+						currentContentLength: this._currentContent.length
+					});
+
+					if (name === 'content' && newValue !== oldValue) {
+						const newContent = newValue || '';
+						console.log('MarkdownRenderer: Full re-render', {
+							newContentLength: newContent.length,
+							preview: newContent.slice(0, 50) + (newContent.length > 50 ? '...' : '')
+						});
+                        this._currentContent = this._currentContent + newContent;
+						this.render(this._currentContent);
+					}
+				}
+
+				render(markdown) {
+					if (markdown) {
+						console.log('MarkdownRenderer: Rendering content');
+						try {
+							const html = marked.parse(markdown);
+							this.content.innerHTML = html;
+						} catch (error) {
+							console.error('MarkdownRenderer: Error parsing markdown:', error);
+							this.content.innerHTML = `<div class="error">Error rendering markdown: ${error.message}</div>`;
+						}
+					}
+				}
+			}
+
+			// Register the web component
+			console.log('Registering markdown-renderer component');
+			customElements.define('markdown-renderer', MarkdownRenderer);
+		</script>
+}

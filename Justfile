@@ -1,7 +1,12 @@
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 
-local:
-	go run main.go
+@local: generate
+    echo "Running on http://localhost:3400"
+    go run main.go
+
+generate:
+    templ fmt .
+    templ generate
 
 staging:
     DITTO_ENV=staging go run main.go
