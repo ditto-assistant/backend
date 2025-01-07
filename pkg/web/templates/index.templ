@@ -1,19 +1,23 @@
 package templates
 
 templ Index() {
-    @head()
-    <div class="container">
-        <div class="header">
-            <h1>Hello, World</h1>
-            <button onclick="handleLogout()" class="logout-button">Logout</button>
-        </div>
-        <div class="actions">
-            <button hx-get="/templates/v1/hello" hx-target="#content">Click me</button>
-            <button hx-get="/templates/v1/login">Login</button>
-            <button hx-get="/templates/v1/text-stream" hx-target="#content">Try Streaming Demo</button>
-        </div>
-        <div id="content"></div>
-        <style>
+	@head()
+	<div class="container">
+		<div class="header">
+			<h1>Hello, World</h1>
+			<button onclick="handleLogout()" class="logout-button">Logout</button>
+		</div>
+		<div class="actions" data-signals="{prompt: 'Write a short story about a cat using lots of markdown formatting.'}">
+			<button hx-get="/templates/v1/hello" hx-target="#content">Click me</button>
+			<button hx-get="/templates/v1/login">Login</button>
+			<button
+				data-on-click="@get('/templates/v1/text-stream')"
+				class="stream-button"
+			>Try Streaming Demo</button>
+			<input data-bind-prompt/>
+		</div>
+		<div id="content"></div>
+		<style>
             .container {
                 padding: 20px;
             }
@@ -40,66 +44,51 @@ templ Index() {
             .logout-button:hover {
                 background-color: #cc0000;
             }
+            .stream-button {
+                padding: 8px 16px;
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                transition: background-color 0.3s ease;
+            }
+            .stream-button:hover {
+                background-color: #45a049;
+            }
+            .stream-button[data-loading] {
+                background-color: #cccccc;
+                cursor: wait;
+            }
         </style>
-    </div>
-    @firebaseAuthSetup()
-
+	</div>
+	@firebaseAuthSetup()
 }
 
 templ Login() {
-    <div class={ loginContainer() }>
-        <div class={ loginForm() }>
-            <h1 style="text-align: center; color: #333; margin-bottom: 20px;">Sign In</h1>
-            <button class={ googleButton() } onclick="handleGoogleSignIn()">
-                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" 
-                     style="margin-right: 10px; width: 18px; height: 18px;"/>
-                Sign in with Google
-            </button>
-        </div>
-    </div>
+	<div class={ loginContainer() }>
+		<div class={ loginForm() }>
+			<h1 style="text-align: center; color: #333; margin-bottom: 20px;">Sign In</h1>
+			<button class={ googleButton() } onclick="handleGoogleSignIn()">
+				<img
+					src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+					style="margin-right: 10px; width: 18px; height: 18px;"
+				/>
+				Sign in with Google
+			</button>
+		</div>
+	</div>
 }
 
 templ head() {
-    <head>
-        <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
-        <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
-        <script>
-            // Wait for DOM to be fully loaded before setting up HTMX configuration
-            document.addEventListener('DOMContentLoaded', function() {
-                // Configure HTMX to send the Firebase token with each request
-                document.body.addEventListener("htmx:configRequest", configEvent => {
-                    const token = localStorage.getItem('firebase-token');
-                    if (token) {
-                        console.log('Adding Firebase token to HTMX request');
-                        configEvent.detail.headers['Authorization'] = 'Bearer ' + token;
-                    } else {
-                        console.log('No Firebase token available for HTMX request');
-                    }
-                });
-                console.log('HTMX token configuration initialized');
-
-            document.body.addEventListener('htmx:sseMessage', function(evt) {
-				console.log('SSE Message:', evt.detail.data);
-			});
-
-			document.body.addEventListener('htmx:sseError', function(evt) {
-				console.error('SSE Error:', evt.detail.error);
-			});
-
-			document.body.addEventListener('htmx:sseOpen', function(evt) {
-				console.log('SSE connection established');
-			});
-
-			document.body.addEventListener('htmx:sseClose', function(evt) {
-				console.log('SSE connection closed:', evt.detail);
-			});
-            });
-        </script>
-    </head>
+	<head>
+		<script type="module" src="https://cdn.jsdelivr.net/gh/starfederation/datastar@v1.0.0-beta.1/bundles/datastar.js"></script>
+		@markdownScript()
+	</head>
 }
 
 templ firebaseAuthSetup() {
-    <script type="module">
+	<script type="module">
         // Import the functions you need from the SDKs you need
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
         import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-analytics.js";
@@ -165,37 +154,175 @@ templ firebaseAuthSetup() {
 }
 
 css loginContainer() {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    min-height: 100vh;
-    background-color: #23272a;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	min-height: 100vh;
+	background-color: #23272a;
 }
 
 css loginForm() {
-    background-color: #ffffffb0;
-    box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.1);
-    border-radius: 8px;
-    padding: 40px 20px;
-    width: 100%;
-    max-width: 400px;
-    box-sizing: border-box;
+	background-color: #ffffffb0;
+	box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.1);
+	border-radius: 8px;
+	padding: 40px 20px;
+	width: 100%;
+	max-width: 400px;
+	box-sizing: border-box;
 }
 
 css googleButton() {
-    width: 100%;
-    padding: 12px 15px;
-    background-color: #ffffff;
-    color: #333;
-    border: 1px solid #ddd;
-    border-radius: 4px;
-    font-size: 16px;
-    font-weight: bold;
-    cursor: pointer;
-    transition: background-color 0.3s ease;
-    margin-top: 10px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-decoration: none;
+	width: 100%;
+	padding: 12px 15px;
+	background-color: #ffffff;
+	color: #333;
+	border: 1px solid #ddd;
+	border-radius: 4px;
+	font-size: 16px;
+	font-weight: bold;
+	cursor: pointer;
+	transition: background-color 0.3s ease;
+	margin-top: 10px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	text-decoration: none;
+}
+
+templ markdownScript() {
+	<script type="module">
+			// Import the marked library for markdown parsing
+			import { marked } from 'https://cdn.jsdelivr.net/npm/marked/lib/marked.esm.js';
+
+			// Define the markdown renderer web component
+			class MarkdownRenderer extends HTMLElement {
+				static get observedAttributes() {
+					return ["content"];
+				}
+
+				constructor() {
+					super();
+					console.log('MarkdownRenderer: Initializing component');
+					this.attachShadow({ mode: 'open' });
+					this.shadowRoot.innerHTML = `
+						<style>
+							:host {
+								display: block;
+								font-family: system-ui, -apple-system, sans-serif;
+								line-height: 1.6;
+								color: #333;
+							}
+							.markdown-content {
+								padding: 1rem;
+							}
+							/* Markdown Styles */
+							h1, h2, h3, h4, h5, h6 {
+								margin-top: 1.5em;
+								margin-bottom: 0.5em;
+								line-height: 1.2;
+							}
+							h1 { font-size: 2em; }
+							h2 { font-size: 1.5em; }
+							h3 { font-size: 1.25em; }
+							p { margin: 1em 0; }
+							code {
+								background: #f4f4f4;
+								padding: 0.2em 0.4em;
+								border-radius: 3px;
+								font-family: monospace;
+								font-size: 0.9em;
+							}
+							pre code {
+								display: block;
+								padding: 1em;
+								overflow-x: auto;
+							}
+							blockquote {
+								border-left: 4px solid #ddd;
+								margin: 0;
+								padding-left: 1em;
+								color: #666;
+							}
+							ul, ol {
+								padding-left: 2em;
+							}
+							img {
+								max-width: 100%;
+								height: auto;
+							}
+							a {
+								color: #0366d6;
+								text-decoration: none;
+							}
+							a:hover {
+								text-decoration: underline;
+							}
+							table {
+								border-collapse: collapse;
+								width: 100%;
+								margin: 1em 0;
+							}
+							th, td {
+								border: 1px solid #ddd;
+								padding: 0.5em;
+								text-align: left;
+							}
+							th {
+								background: #f8f8f8;
+							}
+							strong {
+								font-weight: 600;
+							}
+						</style>
+						<div class="markdown-content"></div>
+					`;
+					this.content = this.shadowRoot.querySelector('.markdown-content');
+					this._currentContent = '';
+					
+					// Configure marked options
+					marked.setOptions({
+						gfm: true,
+						breaks: true,
+						mangle: false,
+						headerIds: false
+					});
+				}
+
+				attributeChangedCallback(name, oldValue, newValue) {
+					console.log('MarkdownRenderer: Attribute changed', {
+						name,
+						oldValue: oldValue?.slice(0, 50) + (oldValue?.length > 50 ? '...' : ''),
+						newValue: newValue?.slice(0, 50) + (newValue?.length > 50 ? '...' : ''),
+						currentContentLength: this._currentContent.length
+					});
+
+					if (name === 'content' && newValue !== oldValue) {
+						const newContent = newValue || '';
+						console.log('MarkdownRenderer: Full re-render', {
+							newContentLength: newContent.length,
+							preview: newContent.slice(0, 50) + (newContent.length > 50 ? '...' : '')
+						});
+                        this._currentContent = this._currentContent + newContent;
+						this.render(this._currentContent);
+					}
+				}
+
+				render(markdown) {
+					if (markdown) {
+						console.log('MarkdownRenderer: Rendering content');
+						try {
+							const html = marked.parse(markdown);
+							this.content.innerHTML = html;
+						} catch (error) {
+							console.error('MarkdownRenderer: Error parsing markdown:', error);
+							this.content.innerHTML = `<div class="error">Error rendering markdown: ${error.message}</div>`;
+						}
+					}
+				}
+			}
+
+			// Register the web component
+			console.log('Registering markdown-renderer component');
+			customElements.define('markdown-renderer', MarkdownRenderer);
+		</script>
 }

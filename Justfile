@@ -5,6 +5,7 @@ set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
     go run main.go
 
 generate:
+    templ fmt .
     templ generate
 
 staging:
