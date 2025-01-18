@@ -18,12 +18,13 @@ type ChatV2 struct {
 func (c ChatV2) GetUserID() string { return c.UserID }
 
 type PromptV1 struct {
-	UserID       string          `json:"userID"`
-	UserPrompt   string          `json:"userPrompt"`
-	SystemPrompt string          `json:"systemPrompt"`
-	Model        llm.ServiceName `json:"model,omitempty"`
-	ImageURL     string          `json:"imageURL,omitempty"`
-	Images       []string        `json:"images,omitempty"`
+	UserID       string             `json:"userID"`
+	UserPrompt   string             `json:"userPrompt"`
+	SystemPrompt string             `json:"systemPrompt"`
+	Model        llm.ServiceName    `json:"model,omitempty"`
+	ImageURL     string             `json:"imageURL,omitempty"`
+	Images       []string           `json:"images,omitempty"`
+	Tools        []llm.FunctionTool `json:"tools,omitempty"`
 }
 
 func (p PromptV1) GetUserID() string { return p.UserID }

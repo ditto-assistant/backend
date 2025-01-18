@@ -35,6 +35,8 @@ type Message struct {
 // Request represents a chat completion request to the OpenAI API
 //
 // https://platform.openai.com/docs/api-reference/chat/create
+//
+// https://platform.openai.com/docs/guides/function-calling
 type Request struct {
 	// Required: ID of the model to use
 	Model string `json:"model"`
@@ -93,10 +95,11 @@ type Request struct {
 	Seed *int `json:"seed,omitempty"`
 
 	// Optional: Tools (like functions) the model may call
-	Tools []Tool `json:"tools,omitempty"`
+	Tools []llm.FunctionTool `json:"tools,omitempty"`
 
 	// Optional: Controls which tool is called by the model
-	ToolChoice *ToolChoice `json:"tool_choice,omitempty"`
+	// Can be "none", "auto", or a specific function configuration
+	ToolChoice interface{} `json:"tool_choice,omitempty"`
 
 	// Optional: Whether to enable parallel function calling during tool use
 	ParallelToolCalls bool `json:"parallel_tool_calls,omitempty"`
@@ -123,32 +126,6 @@ type ResponseFormat struct {
 	Type string `json:"type"`
 	// Optional JSON schema for structured output
 	JSONSchema interface{} `json:"json_schema,omitempty"`
-}
-
-// Tool represents a function the model can call
-type Tool struct {
-	// Type of tool (currently only "function" is supported)
-	Type string `json:"type"`
-	// Function definition
-	Function ToolFunction `json:"function"`
-}
-
-// ToolFunction defines a callable function
-type ToolFunction struct {
-	// Name of the function
-	Name string `json:"name"`
-	// Description of what the function does
-	Description string `json:"description"`
-	// Parameters the function accepts (in JSON Schema format)
-	Parameters interface{} `json:"parameters"`
-}
-
-// ToolChoice controls tool usage
-type ToolChoice struct {
-	// Type of choice ("none", "auto", "function")
-	Type string `json:"type"`
-	// Optional specific function to call
-	Function *ToolFunction `json:"function,omitempty"`
 }
 
 // StreamResponse represents a streamed chunk of a chat completion response
@@ -179,7 +156,17 @@ type StreamResponse struct {
 		// The delta content for this chunk
 		Delta struct {
 			// The text content of this chunk
-			Content string `json:"content"`
+			Content string `json:"content,omitempty"`
+			// Function call information
+			ToolCalls []struct {
+				Index    int    `json:"index"`
+				ID       string `json:"id"`
+				Type     string `json:"type"`
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls,omitempty"`
 		} `json:"delta"`
 
 		// The reason the model stopped generating
@@ -275,6 +262,7 @@ func Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) er
 		Stream:              true,
 		StreamOptions:       &StreamOptions{IncludeUsage: true},
 		MaxCompletionTokens: 8192,
+		Tools:               prompt.Tools,
 	}
 
 	var buf bytes.Buffer
@@ -300,6 +288,14 @@ func Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) er
 		defer close(tokenChan)
 
 		scanner := bufio.NewScanner(resp.Body)
+		// Map to accumulate function calls by index
+		finalToolCalls := make(map[int]*struct {
+			ID        string
+			Type      string
+			Name      string
+			Arguments string
+		})
+
 		for scanner.Scan() {
 			line := scanner.Text()
 			if !strings.HasPrefix(line, "data: ") {
@@ -319,6 +315,40 @@ func Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) er
 			for _, choice := range streamResp.Choices {
 				if choice.Delta.Content != "" {
 					tokenChan <- llm.Token{Ok: choice.Delta.Content}
+				}
+				// Handle function calls
+				if len(choice.Delta.ToolCalls) > 0 {
+					for _, toolCall := range choice.Delta.ToolCalls {
+						// Get or create the accumulated tool call
+						accumulatedCall, exists := finalToolCalls[toolCall.Index]
+						if !exists {
+							accumulatedCall = &struct {
+								ID        string
+								Type      string
+								Name      string
+								Arguments string
+							}{
+								ID:   toolCall.ID,
+								Type: toolCall.Type,
+								Name: toolCall.Function.Name,
+							}
+							finalToolCalls[toolCall.Index] = accumulatedCall
+							// When we first see a function call, emit the start of the call
+							if toolCall.Function.Name != "" {
+								tokenChan <- llm.Token{Ok: fmt.Sprintf("\nCalling function: %s\nArguments: ", toolCall.Function.Name)}
+							}
+						}
+						// Accumulate arguments
+						if toolCall.Function.Arguments != "" {
+							accumulatedCall.Arguments += toolCall.Function.Arguments
+							// Stream the arguments as they come in
+							tokenChan <- llm.Token{Ok: toolCall.Function.Arguments}
+						}
+						// If this is the last chunk for this tool call (indicated by finish_reason)
+						if choice.FinishReason == "tool_calls" {
+							tokenChan <- llm.Token{Ok: "\n"}
+						}
+					}
 				}
 			}
 			if streamResp.Usage != nil {
