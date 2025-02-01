@@ -21,6 +21,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/services/db"
 	"github.com/ditto-assistant/backend/pkg/services/db/users"
 	"github.com/ditto-assistant/backend/pkg/services/llm"
+	"github.com/ditto-assistant/backend/pkg/services/llm/cerebras"
 	"github.com/ditto-assistant/backend/pkg/services/llm/claude"
 	"github.com/ditto-assistant/backend/pkg/services/llm/gemini"
 	"github.com/ditto-assistant/backend/pkg/services/llm/googai"
@@ -85,6 +86,7 @@ func main() {
 
 	v2Client := apiv2.NewService(coreSvc)
 	v2Client.Routes(mux)
+	cerebrasClient := cerebras.NewService(&sdCtx, coreSvc.Secr)
 
 	webClient := web.NewClient(coreSvc)
 	webClient.Routes(mux)
@@ -172,6 +174,13 @@ func main() {
 			llm.ModelGPT4oMini, llm.ModelGPT4oMini_20240718,
 			llm.ModelGPT4o, llm.ModelGPT4o_1120:
 			err = gpt.Prompt(ctx, bod, &rsp)
+			if err != nil {
+				slog.Error("failed to prompt "+bod.Model.String(), "error", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		case llm.ModelCerebrasLlama8B, llm.ModelCerebrasLlama70B:
+			err = cerebrasClient.Prompt(ctx, bod, &rsp)
 			if err != nil {
 				slog.Error("failed to prompt "+bod.Model.String(), "error", err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
