@@ -36,7 +36,6 @@ import (
 	"github.com/ditto-assistant/backend/pkg/services/stripe"
 	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/ditto-assistant/backend/types/ty"
-	"github.com/firebase/genkit/go/plugins/vertexai"
 )
 
 func main() {
@@ -45,12 +44,6 @@ func main() {
 	var shutdownWG sync.WaitGroup
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGINT)
-	if err := vertexai.Init(bgCtx, &vertexai.Config{
-		ProjectID: "ditto-app-dev",
-		Location:  "us-central1",
-	}); err != nil {
-		log.Fatal(err)
-	}
 	sdCtx := ty.ShutdownContext{
 		Background: bgCtx,
 		WaitGroup:  &shutdownWG,
@@ -62,6 +55,13 @@ func main() {
 	if err := db.Setup(bgCtx, &shutdownWG, db.ModeCloud); err != nil {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
+
+	// Initialize Google AI client
+	googaiClient, err := googai.NewClient(bgCtx)
+	if err != nil {
+		log.Fatalf("failed to initialize Google AI client: %v", err)
+	}
+
 	mux := http.NewServeMux()
 	searchClient := search.NewClient(
 		search.WithService(brave.NewService(sdCtx, coreSvc.Secr)),
@@ -229,7 +229,6 @@ func main() {
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
-
 		}
 		user := users.User{UID: bod.UserID}
 		ctx := r.Context()
@@ -245,12 +244,15 @@ func main() {
 			if bod.Model == "" {
 				bod.Model = llm.ModelTextEmbedding004
 			}
-			embedding, err = googai.GenerateEmbedding(ctx, bod.Text, bod.Model)
-		}
-
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			embeddings, err := googaiClient.Embed(ctx, googai.EmbedRequest{
+				Documents: []string{bod.Text},
+				Model:     bod.Model,
+			})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			embedding = embeddings[0]
 		}
 
 		w.Header().Set("Content-Type", "application/json")
