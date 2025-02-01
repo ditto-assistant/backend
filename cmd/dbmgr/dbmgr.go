@@ -22,9 +22,8 @@ import (
 	"github.com/ditto-assistant/backend/pkg/services/db"
 	"github.com/ditto-assistant/backend/pkg/services/db/users"
 	"github.com/ditto-assistant/backend/pkg/services/llm"
+	"github.com/ditto-assistant/backend/pkg/services/llm/googai"
 	"github.com/ditto-assistant/backend/pkg/utils/numfmt"
-	"github.com/firebase/genkit/go/ai"
-	"github.com/firebase/genkit/go/plugins/vertexai"
 	_ "github.com/tursodatabase/go-libsql"
 	"golang.org/x/sync/errgroup"
 )
@@ -273,33 +272,20 @@ func testSearch(ctx context.Context, query string) error {
 	if latestVersion < minVersion {
 		return fmt.Errorf("version %s is not applied, please apply at least version %s before searching", latestVersion, minVersion)
 	}
-	if err := vertexai.Init(ctx, &vertexai.Config{
-		ProjectID: "ditto-app-dev",
-		Location:  "us-central1",
-	}); err != nil {
-		return fmt.Errorf("error initializing vertexai: %w", err)
+
+	// Initialize Google AI client
+	googaiClient, err := googai.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("error initializing Google AI client: %w", err)
 	}
-	embedder := vertexai.Embedder(llm.ModelTextEmbedding004.String())
-	if embedder == nil {
-		return errors.New("embedder not found")
-	}
-	emQuery, err := embedder.Embed(ctx, &ai.EmbedRequest{
-		Documents: []*ai.Document{
-			{
-				Content: []*ai.Part{
-					{
-						Kind: ai.PartText,
-						Text: query,
-					},
-				},
-			},
-		},
-	})
+
+	// Generate embedding for the query
+	embedding, err := googaiClient.GenerateEmbedding(ctx, query, llm.ModelTextEmbedding004)
 	if err != nil {
 		return fmt.Errorf("error embedding query: %w", err)
 	}
-	em := llm.Embedding(emQuery.Embeddings[0].Embedding)
-	examples, err := db.SearchExamples(ctx, em)
+
+	examples, err := db.SearchExamples(ctx, embedding)
 	if err != nil {
 		return fmt.Errorf("error searching examples: %w", err)
 	}
@@ -324,12 +310,13 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 	if latestVersion < minVersion {
 		return fmt.Errorf("version %s is not applied, please apply at least version %s before embedding", latestVersion, minVersion)
 	}
-	if err := vertexai.Init(ctx, &vertexai.Config{
-		ProjectID: "ditto-app-dev",
-		Location:  "us-central1",
-	}); err != nil {
-		return fmt.Errorf("error initializing vertexai: %w", err)
+
+	// Initialize Google AI client
+	googaiClient, err := googai.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("error initializing Google AI client: %w", err)
 	}
+
 	files, err := filepath.Glob(filepath.Join(folder, "*.json"))
 	if err != nil {
 		return fmt.Errorf("error reading folder: %w", err)
@@ -352,14 +339,11 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 		return nil
 	}
 
-	embedder := vertexai.Embedder(llm.ModelTextEmbedding004.String())
-	if embedder == nil {
-		return errors.New("embedder not found")
-	}
 	group, embedCtx := errgroup.WithContext(ctx)
 	for _, tool := range fileSlice {
+		tool := tool // capture for goroutine
 		group.Go(func() error {
-			if err := tool.Embed(embedCtx, embedder); err != nil {
+			if err := tool.Embed(embedCtx, googaiClient); err != nil {
 				return fmt.Errorf("error embedding tool: %w", err)
 			}
 			return nil
@@ -426,47 +410,46 @@ type ToolExamples struct {
 }
 
 // Embed embeds all the examples in the tool example.
-func (te ToolExamples) Embed(ctx context.Context, embedder ai.Embedder) error {
-	docs := make([]*ai.Document, 0, len(te.Examples)*2)
-	for _, example := range te.Examples {
-		// Embed the prompt
-		docs = append(docs, &ai.Document{
-			Content: []*ai.Part{
-				{
-					Kind: ai.PartText,
-					Text: example.Prompt,
-				},
-			},
-			Metadata: map[string]any{
-				"tool_name":   te.Name,
-				"description": te.Description,
-			},
+func (te ToolExamples) Embed(ctx context.Context, client *googai.Client) error {
+	// Process examples in batches
+	batchSize := 10 // Process 10 examples at a time
+	for i := 0; i < len(te.Examples); i += batchSize {
+		end := i + batchSize
+		if end > len(te.Examples) {
+			end = len(te.Examples)
+		}
+
+		// Prepare batch of prompts
+		promptDocs := make([]string, end-i)
+		promptRespDocs := make([]string, end-i)
+		for j := i; j < end; j++ {
+			promptDocs[j-i] = te.Examples[j].Prompt
+			promptRespDocs[j-i] = te.Examples[j].Prompt + " " + te.Examples[j].Response
+		}
+
+		// Get embeddings for prompts
+		promptEmbeddings, err := client.Embed(ctx, googai.EmbedRequest{
+			Documents: promptDocs,
+			Model:     llm.ModelTextEmbedding004,
 		})
-		// Embed the prompt and response together
-		docs = append(docs, &ai.Document{
-			Content: []*ai.Part{
-				{
-					Kind: ai.PartText,
-					Text: example.Prompt,
-				},
-				{
-					Kind: ai.PartText,
-					Text: example.Response,
-				},
-			},
-			Metadata: map[string]any{
-				"tool_name":   te.Name,
-				"description": te.Description,
-			},
+		if err != nil {
+			return fmt.Errorf("error embedding prompts: %w", err)
+		}
+
+		// Get embeddings for prompt+response combinations
+		promptRespEmbeddings, err := client.Embed(ctx, googai.EmbedRequest{
+			Documents: promptRespDocs,
+			Model:     llm.ModelTextEmbedding004,
 		})
-	}
-	rs, err := embedder.Embed(ctx, &ai.EmbedRequest{Documents: docs})
-	if err != nil {
-		return fmt.Errorf("error embedding: %w", err)
-	}
-	for i := range te.Examples {
-		te.Examples[i].EmPrompt = rs.Embeddings[i*2].Embedding
-		te.Examples[i].EmPromptResp = rs.Embeddings[i*2+1].Embedding
+		if err != nil {
+			return fmt.Errorf("error embedding prompt+responses: %w", err)
+		}
+
+		// Store embeddings in examples
+		for j := 0; j < end-i; j++ {
+			te.Examples[i+j].EmPrompt = promptEmbeddings[j]
+			te.Examples[i+j].EmPromptResp = promptRespEmbeddings[j]
+		}
 	}
 	return nil
 }
