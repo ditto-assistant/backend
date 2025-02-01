@@ -30,6 +30,10 @@ const (
 	ModelFlux1Pro ServiceName = "flux-1-pro"
 	// ModelFlux1Dev is BFL's FLUX.1 Dev model
 	ModelFlux1Dev ServiceName = "flux-1-dev"
+	// ModelCerebrasLlama8B is Cerebras' Llama 3.1 8B model
+	ModelCerebrasLlama8B ServiceName = "llama3.1-8b"
+	// ModelCerebrasLlama70B is Cerebras' Llama 3.3 70B model
+	ModelCerebrasLlama70B ServiceName = "llama-3.3-70b"
 )
 
 // Anthropic Models
