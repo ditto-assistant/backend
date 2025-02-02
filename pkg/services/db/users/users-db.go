@@ -44,12 +44,12 @@ func (u *User) Get(ctx context.Context) (err error) {
 	*u, err = userCache.Get(u.UID, func() (User, error) {
 		usr := User{UID: u.UID}
 		err := db.D.QueryRowContext(ctx,
-			"SELECT id, balance FROM users WHERE uid = ?", u.UID).
-			Scan(&usr.ID, &usr.Balance)
+			"SELECT id, balance, email FROM users WHERE uid = ?", u.UID).
+			Scan(&usr.ID, &usr.Balance, &usr.Email)
 		if err == sql.ErrNoRows {
 			err = usr.Insert(ctx)
 		}
-		slog.Debug("got user", "uid", usr.UID, "id", usr.ID, "balance", usr.Balance)
+		slog.Debug("got user", "uid", usr.UID, "id", usr.ID, "balance", usr.Balance, "email", usr.Email.String)
 		return usr, err
 	})
 	return err

@@ -39,14 +39,16 @@ import (
 )
 
 func main() {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 	bgCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var shutdownWG sync.WaitGroup
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGINT)
 	sdCtx := ty.ShutdownContext{
-		Background: bgCtx,
-		WaitGroup:  &shutdownWG,
+		Background:       bgCtx,
+		WaitGroup:        &shutdownWG,
+		ShutdownDuration: 30 * time.Second,
 	}
 	coreSvc, err := core.NewClient(bgCtx)
 	if err != nil {
@@ -55,8 +57,6 @@ func main() {
 	if err := db.Setup(bgCtx, &shutdownWG, db.ModeCloud); err != nil {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
-
-	// Initialize Google AI client
 	googaiClient, err := googai.NewClient(bgCtx)
 	if err != nil {
 		log.Fatalf("failed to initialize Google AI client: %v", err)
@@ -104,8 +104,6 @@ func main() {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		slog := slog.With("user_id", bod.UserID, "model", bod.Model)
-		slog.Debug("Prompt Request")
 		user := users.User{UID: bod.UserID}
 		ctx := r.Context()
 		if err := user.Get(ctx); err != nil {
@@ -113,6 +111,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		slog := slog.With("action", "prompt", "user_id", bod.UserID, "model", bod.Model, "email", user.Email.String)
 		// llama32 is free
 		if user.Balance <= 0 && bod.Model != llm.ModelLlama32 {
 			slog.Error("user balance is 0", "balance", user.Balance)
@@ -189,18 +188,15 @@ func main() {
 		}
 		for token := range rsp.Text {
 			if token.Err != nil {
+				slog.Error("failed to stream token", "error", token.Err)
 				http.Error(w, token.Err.Error(), http.StatusInternalServerError)
 				return
 			}
 			fmt.Fprint(w, token.Ok)
 		}
 
-		shutdownWG.Add(1)
-		go func() {
-			slog.Info("inserting receipt", "input_tokens", rsp.InputTokens, "output_tokens", rsp.OutputTokens)
-			defer shutdownWG.Done()
-			ctx, cancel := context.WithTimeout(bgCtx, 15*time.Second)
-			defer cancel()
+		sdCtx.Run(func(ctx context.Context) {
+			slog.Debug("receipt", "input_tokens", rsp.InputTokens, "output_tokens", rsp.OutputTokens)
 			receipt := db.Receipt{
 				UserID:       user.ID,
 				InputTokens:  int64(rsp.InputTokens),
@@ -210,7 +206,7 @@ func main() {
 			if err := receipt.Insert(ctx); err != nil {
 				slog.Error("failed to insert receipt", "error", err)
 			}
-		}()
+		})
 	})
 
 	// - MARK: embed
@@ -236,14 +232,15 @@ func main() {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if bod.Model == "" {
+			bod.Model = llm.ModelTextEmbedding004
+		}
+		slog := slog.With("action", "embed", "user_id", bod.UserID, "model", bod.Model, "email", user.Email.String)
 
 		var embedding llm.Embedding
 		if bod.Model == llm.ModelTextEmbedding3Small {
 			embedding, err = openai.GenerateEmbedding(ctx, bod.Text, bod.Model)
 		} else {
-			if bod.Model == "" {
-				bod.Model = llm.ModelTextEmbedding004
-			}
 			embeddings, err := googaiClient.Embed(ctx, googai.EmbedRequest{
 				Documents: []string{bod.Text},
 				Model:     bod.Model,
@@ -258,20 +255,18 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(embedding)
 
-		shutdownWG.Add(1)
-		go func() {
-			defer shutdownWG.Done()
-			ctx, cancel := context.WithTimeout(bgCtx, 15*time.Second)
-			defer cancel()
+		sdCtx.Run(func(ctx context.Context) {
+			tokens := llm.EstimateTokens(bod.Text)
+			slog.Debug("receipt", "input_tokens", tokens)
 			receipt := db.Receipt{
 				UserID:      user.ID,
-				TotalTokens: int64(llm.EstimateTokens(bod.Text)),
+				TotalTokens: int64(tokens),
 				ServiceName: bod.Model,
 			}
 			if err := receipt.Insert(ctx); err != nil {
 				slog.Error("failed to insert receipt", "error", err)
 			}
-		}()
+		})
 	})
 
 	// - MARK: search-examples
