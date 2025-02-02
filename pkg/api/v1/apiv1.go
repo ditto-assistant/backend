@@ -166,6 +166,10 @@ func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 		return
 	}
+	if bod.DummyMode {
+		fmt.Fprintln(w, envs.DALLE_E_DUMMY_LINK)
+		return
+	}
 	url, err := s.dalle.Prompt(ctx, &bod)
 	if err != nil {
 		slog.Error("failed to generate image", "error", err)
