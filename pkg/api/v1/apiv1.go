@@ -156,12 +156,12 @@ func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
 	}
 	user := users.User{UID: bod.UserID}
 	ctx := r.Context()
-	slog := slog.With("user_id", bod.UserID, "model", bod.Model)
 	if err := user.Get(ctx); err != nil {
 		slog.Error("failed to get user", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	slog := slog.With("user_id", bod.UserID, "model", bod.Model, "email", user.Email.String)
 	if user.Balance <= 0 {
 		http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 		return
@@ -173,13 +173,9 @@ func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fmt.Fprintln(w, url)
-	slog.Debug("generated image", "url", url)
 
-	s.sd.WaitGroup.Add(1)
-	go func() {
-		defer s.sd.WaitGroup.Done()
-		ctx, cancel := context.WithTimeout(s.sd.Background, 15*time.Second)
-		defer cancel()
+	s.sd.Run(func(ctx context.Context) {
+		slog.Debug("image receipt", "url", url)
 		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 		if err != nil {
 			slog.Error("failed to create image request", "error", err)
@@ -222,7 +218,7 @@ func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
 		if err := receipt.Insert(ctx); err != nil {
 			slog.Error("failed to insert receipt", "error", err)
 		}
-	}()
+	})
 }
 
 // - MARK: presign-url

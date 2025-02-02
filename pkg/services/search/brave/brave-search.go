@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/ditto-assistant/backend/cfg/secr"
 	"github.com/ditto-assistant/backend/pkg/services/db"
@@ -82,11 +81,7 @@ func (s *Service) Search(ctx context.Context, req search.Request) (search.Result
 	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
-	s.sd.WaitGroup.Add(1)
-	go func() {
-		defer s.sd.WaitGroup.Done()
-		ctx, cancel := context.WithTimeout(s.sd.Background, 15*time.Second)
-		defer cancel()
+	s.sd.Run(func(ctx context.Context) {
 		receipt := db.Receipt{
 			UserID:      req.User.ID,
 			NumSearches: 1,
@@ -103,7 +98,7 @@ func (s *Service) Search(ctx context.Context, req search.Request) (search.Result
 			"service_id", receipt.ServiceID,
 			"num_searches", receipt.NumSearches,
 		)
-	}()
+	})
 	return results, nil
 }
 
