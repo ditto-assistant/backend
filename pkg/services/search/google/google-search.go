@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"strconv"
 	"sync"
-	"time"
 
 	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/cfg/secr"
@@ -71,11 +70,7 @@ func (s *Service) Search(ctx context.Context, req search.Request) (results searc
 	if err != nil {
 		return nil, fmt.Errorf("failed to search: %w", err)
 	}
-	s.sd.WaitGroup.Add(1)
-	go func() {
-		defer s.sd.WaitGroup.Done()
-		ctx, cancel := context.WithTimeout(s.sd.Background, 15*time.Second)
-		defer cancel()
+	s.sd.Run(func(ctx context.Context) {
 		receipt := db.Receipt{
 			UserID:      req.User.ID,
 			NumSearches: 1,
@@ -92,7 +87,7 @@ func (s *Service) Search(ctx context.Context, req search.Request) (results searc
 			"service_id", receipt.ServiceID,
 			"num_searches", receipt.NumSearches,
 		)
-	}()
+	})
 	return &Results{Items: ser.Items}, nil
 }
 
