@@ -56,7 +56,7 @@ push-new-tag dry-run="false":
 # create a github release for the latest tag with auto-generated release notes
 gh-release:
 	#!/bin/sh
-	VERSION=$(cat package.json | jq -r .version)
+    VERSION=$(git describe --tags `git rev-list --tags --max-count=1`)
 	gh release create v$VERSION --generate-notes
 
 # create a new release for the latest tag with auto-generated release notes
