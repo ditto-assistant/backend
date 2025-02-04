@@ -53,11 +53,15 @@ push-new-tag dry-run="false":
         git push origin $NEW_TAG
     fi
 
+# get the latest tag
+@version:
+	git describe --tags `git rev-list --tags --max-count=1`
+
 # create a github release for the latest tag with auto-generated release notes
 gh-release:
 	#!/bin/sh
-    VERSION=$(git describe --tags `git rev-list --tags --max-count=1`)
-	gh release create v$VERSION --generate-notes
+	VERSION=$(just version)
+	gh release create $VERSION --generate-notes
 
 # create a new release for the latest tag with auto-generated release notes
 create-patch-release: push-new-tag gh-release
