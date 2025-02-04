@@ -247,7 +247,7 @@ func syncBalance(ctx context.Context) error {
 		userID := doc.Ref.Parent.Parent.ID
 		newBalance := int64(userData.Balance * float64(count))
 		user := users.User{UID: userID, Balance: newBalance}
-		if err := user.InitBalance(ctx); err != nil {
+		if err := user.InitBalance(ctx, db.D); err != nil {
 			return fmt.Errorf("error initializing user: %w", err)
 		}
 		slog.Info("User balance synced",

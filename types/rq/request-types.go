@@ -3,6 +3,7 @@ package rq
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/ditto-assistant/backend/pkg/services/llm"
 )
@@ -71,8 +72,11 @@ type SearchExamplesV1 struct {
 func (s SearchExamplesV1) GetUserID() string { return s.UserID }
 
 type BalanceV1 struct {
-	UserID string `json:"userID"`
-	Email  string `json:"email"`
+	UserID   string `json:"userID"`
+	Email    string `json:"email"`
+	Version  string `json:"version"`
+	Platform int    `json:"platform"`
+	DeviceID string `json:"deviceId"`
 }
 
 func (b BalanceV1) GetUserID() string { return b.UserID }
@@ -84,6 +88,12 @@ func (b *BalanceV1) FromQuery(r *http.Request) error {
 	}
 	b.UserID = uid
 	b.Email = r.URL.Query().Get("email")
+	b.Version = r.URL.Query().Get("version")
+	b.Platform, _ = strconv.Atoi(r.URL.Query().Get("platform"))
+	b.DeviceID = r.URL.Query().Get("deviceID")
+	if b.DeviceID == "" {
+		b.DeviceID = r.URL.Query().Get("deviceId")
+	}
 	return nil
 }
 
@@ -126,3 +136,12 @@ type ParamsShortTermMemoriesV2 struct {
 }
 
 func (g *GetMemoriesV2) GetUserID() string { return g.UserID }
+
+type FeedbackV1 struct {
+	UserID   string `json:"userID"`
+	DeviceID string `json:"deviceId"`
+	Type     string `json:"type"` // bug, feature-request, other
+	Feedback string `json:"feedback"`
+}
+
+func (f FeedbackV1) GetUserID() string { return f.UserID }
