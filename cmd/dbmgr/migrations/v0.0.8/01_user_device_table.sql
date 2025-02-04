@@ -5,8 +5,8 @@ CREATE TABLE IF NOT EXISTS user_devices (
   last_sign_in DATETIME DEFAULT CURRENT_TIMESTAMP,
   user_agent TEXT,
   version TEXT NOT NULL,
-  -- mobile-browser, desktop-browser, mobile-app, desktop-app, unknown
-  platform TEXT NOT NULL,
+  -- 0: web, 1: android, 2: ios, 3: linux, 4: macos, 5: unknown, 6: windows
+  platform INTEGER NOT NULL,
   accept_language TEXT,
   -- for Ditto team
   comment TEXT,

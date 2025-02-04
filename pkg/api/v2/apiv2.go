@@ -41,7 +41,7 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	slog = slog.With("user_id", req.UserID)
+	slog = slog.With("userID", req.UserID)
 	rsp, err := s.cl.Memories.GetMemoriesV2(r.Context(), &req)
 	if err != nil {
 		slog.Error("Failed to get memories", "error", err)

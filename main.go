@@ -106,12 +106,12 @@ func main() {
 		}
 		user := users.User{UID: bod.UserID}
 		ctx := r.Context()
-		if err := user.Get(ctx); err != nil {
+		if err := user.Get(ctx, db.D); err != nil {
 			slog.Error("failed to get user", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		slog := slog.With("action", "prompt", "user_id", bod.UserID, "model", bod.Model, "email", user.Email.String)
+		slog := slog.With("action", "prompt", "userID", bod.UserID, "model", bod.Model, "email", user.Email.String)
 		// llama32 is free
 		if user.Balance <= 0 && bod.Model != llm.ModelLlama32 {
 			slog.Error("user balance is 0", "balance", user.Balance)
@@ -228,14 +228,14 @@ func main() {
 		}
 		user := users.User{UID: bod.UserID}
 		ctx := r.Context()
-		if err := user.Get(ctx); err != nil {
+		if err := user.Get(ctx, db.D); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		if bod.Model == "" {
 			bod.Model = llm.ModelTextEmbedding004
 		}
-		slog := slog.With("action", "embed", "user_id", bod.UserID, "model", bod.Model, "email", user.Email.String)
+		slog := slog.With("action", "embed", "userID", bod.UserID, "model", bod.Model, "email", user.Email.String)
 
 		var embedding llm.Embedding
 		if bod.Model == llm.ModelTextEmbedding3Small {

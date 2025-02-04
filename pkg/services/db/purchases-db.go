@@ -1,6 +1,10 @@
 package db
 
-import "time"
+import (
+	"context"
+	"database/sql"
+	"time"
+)
 
 type Purchase struct {
 	ID        int64
@@ -11,8 +15,8 @@ type Purchase struct {
 	CreatedAt time.Time
 }
 
-func (p *Purchase) Insert(uid string) error {
-	res, err := D.Exec(`
+func (p *Purchase) Insert(ctx context.Context, d *sql.DB, uid string) error {
+	res, err := d.ExecContext(ctx, `
 		WITH user_lookup AS (
 			SELECT id FROM users WHERE uid = ?
 		)

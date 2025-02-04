@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/ditto-assistant/backend/pkg/services/db"
 	"github.com/ditto-assistant/backend/types/rq"
 )
 
@@ -45,13 +44,18 @@ type resultAirdrop struct {
 	DropAmount int64
 }
 
-func handleAirdrop(ctx context.Context, req rq.BalanceV1, opts ...airdropOption) (*resultAirdrop, error) {
+func handleAirdrop(
+	ctx context.Context,
+	d *sql.DB,
+	req rq.BalanceV1,
+	opts ...airdropOption,
+) (*resultAirdrop, error) {
 	cfg := defaultAirdropConfig()
 	for _, opt := range opts {
 		opt(&cfg)
 	}
 	var q User
-	err := db.D.QueryRowContext(ctx, `
+	err := d.QueryRowContext(ctx, `
 		SELECT id, uid, email, last_airdrop_at FROM users WHERE email = ? OR uid = ?`, req.Email, req.UserID).
 		Scan(&q.ID, &q.UID, &q.Email, &q.LastAirdropAt)
 	if err == sql.ErrNoRows {
@@ -63,7 +67,7 @@ func handleAirdrop(ctx context.Context, req rq.BalanceV1, opts ...airdropOption)
 			TotalTokensAirdropped: cfg.Amount,
 			LastAirdropAt:         sql.NullTime{Time: time.Now(), Valid: true},
 		}
-		if err := user.Insert(ctx); err != nil {
+		if err := user.Insert(ctx, d); err != nil {
 			return nil, fmt.Errorf("failed to insert new user: %w", err)
 		}
 		return &resultAirdrop{ID: user.ID, DropAmount: cfg.Amount}, nil
@@ -75,7 +79,7 @@ func handleAirdrop(ctx context.Context, req rq.BalanceV1, opts ...airdropOption)
 	if q.Email.Valid &&
 		q.Email.String == req.Email &&
 		q.UID != req.UserID { // Email is the same but userID is different
-		_, err = db.D.ExecContext(ctx, `
+		_, err = d.ExecContext(ctx, `
 			UPDATE users SET uid = ? WHERE id = ?`, req.UserID, q.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to update user UID: %w", err)
@@ -83,7 +87,7 @@ func handleAirdrop(ctx context.Context, req rq.BalanceV1, opts ...airdropOption)
 		slog.Info("user deleted and recreated account", "uid", req.UserID, "email", req.Email)
 	} else if q.UID == req.UserID &&
 		(!q.Email.Valid || q.Email.String != req.Email) { // Email changed or not set
-		_, err = db.D.ExecContext(ctx, `
+		_, err = d.ExecContext(ctx, `
 			UPDATE users SET email = ? WHERE id = ?`, req.Email, q.ID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to update user email: %w", err)
@@ -92,7 +96,7 @@ func handleAirdrop(ctx context.Context, req rq.BalanceV1, opts ...airdropOption)
 	}
 
 	if !q.LastAirdropAt.Valid || time.Since(q.LastAirdropAt.Time) > cfg.Period {
-		_, err = db.D.ExecContext(ctx, `
+		_, err = d.ExecContext(ctx, `
 			UPDATE users SET
 				balance = balance + ?,
 				total_tokens_airdropped = total_tokens_airdropped + ?,

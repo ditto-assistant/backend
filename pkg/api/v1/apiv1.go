@@ -78,7 +78,8 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	rsp, err := users.GetBalance(r.Context(), bod)
+
+	rsp, err := users.GetBalance(r, db.D, bod)
 	if err != nil {
 		slog.Error("failed to handle balance request", "uid", bod.UserID, "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -115,7 +116,7 @@ func (s *Service) WebSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	user := users.User{UID: bod.UserID}
 	ctx := r.Context()
-	if err := user.Get(ctx); err != nil {
+	if err := user.Get(ctx, db.D); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -156,12 +157,12 @@ func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
 	}
 	user := users.User{UID: bod.UserID}
 	ctx := r.Context()
-	if err := user.Get(ctx); err != nil {
+	if err := user.Get(ctx, db.D); err != nil {
 		slog.Error("failed to get user", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	slog := slog.With("user_id", bod.UserID, "model", bod.Model, "email", user.Email.String)
+	slog := slog.With("userID", bod.UserID, "model", bod.Model, "email", user.Email.String)
 	if user.Balance <= 0 {
 		http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 		return
@@ -332,7 +333,7 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	slog = slog.With("user_id", req.UserID)
+	slog = slog.With("userID", req.UserID)
 	if len(req.Vector) == 0 {
 		slog.Error("Missing required parameters",
 			"userId", req.UserID != "",

@@ -5,23 +5,45 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"net/http"
 
-	"github.com/ditto-assistant/backend/pkg/services/db"
 	"github.com/ditto-assistant/backend/pkg/utils/numfmt"
 	"github.com/ditto-assistant/backend/types/rp"
 	"github.com/ditto-assistant/backend/types/rq"
 )
 
+//go:generate stringer -type=Platform
+
+type Platform int
+
+const (
+	PlatformWeb Platform = iota
+	PlatformAndroid
+	PlatformiOS
+	PlatformLinux
+	PlatformMacOS
+	PlatformUnknown
+	PlatformWindows
+)
+
 // GetBalance manages the entire balance check flow including airdrops
-func GetBalance(ctx context.Context, req rq.BalanceV1) (rp.BalanceV1, error) {
-	if req.Email == "" {
-		return getBalance(ctx, WithUserID(req.UserID))
+func GetBalance(r *http.Request, d *sql.DB, req rq.BalanceV1) (rp.BalanceV1, error) {
+	ctx := r.Context()
+	if req.DeviceID != "" {
+		if err := handleDeviceID(r, d, req); err != nil {
+			return rp.BalanceV1{}, err
+		}
 	}
-	res, err := handleAirdrop(ctx, req)
+
+	// Then handle the balance check
+	if req.Email == "" {
+		return getBalance(ctx, d, WithUserID(req.UserID))
+	}
+	res, err := handleAirdrop(ctx, d, req)
 	if err != nil {
 		return rp.BalanceV1{}, fmt.Errorf("failed to handle airdrop: %w", err)
 	}
-	balance, err := getBalance(ctx, WithID(res.ID))
+	balance, err := getBalance(ctx, d, WithID(res.ID))
 	if err != nil {
 		return rp.BalanceV1{}, fmt.Errorf("failed to get user balance: %w", err)
 	}
@@ -31,6 +53,68 @@ func GetBalance(ctx context.Context, req rq.BalanceV1) (rp.BalanceV1, error) {
 		balance.DropAmount = numfmt.LargeNumber(res.DropAmount)
 	}
 	return balance, nil
+}
+
+func handleDeviceID(r *http.Request, d *sql.DB, req rq.BalanceV1) error {
+	ctx := r.Context()
+	userAgent := r.Header.Get("User-Agent")
+	acceptLanguage := r.Header.Get("Accept-Language")
+	device := UserDevice{
+		DeviceUID: req.DeviceID,
+		Version:   req.Version,
+		Platform:  Platform(req.Platform),
+		UserAgent: sql.NullString{
+			String: userAgent,
+			Valid:  userAgent != "",
+		},
+		AcceptLanguage: sql.NullString{
+			String: acceptLanguage,
+			Valid:  acceptLanguage != "",
+		},
+	}
+	slog := slog.With(
+		"device", device.DeviceUID,
+		"version", device.Version,
+		"platform", device.Platform,
+		"userID", req.UserID,
+		"email", req.Email,
+	)
+
+	// Try to get existing device
+	err := device.Get(ctx, d)
+	if err == sql.ErrNoRows {
+		slog.Debug("new device")
+		// New device, create it
+		var user User
+		user.UID = req.UserID
+		if err := user.Get(ctx, d); err != nil {
+			return fmt.Errorf("failed to get user: %w", err)
+		}
+		device.UserID = user.ID
+		if err := device.Insert(ctx, d); err != nil {
+			return fmt.Errorf("failed to insert device: %w", err)
+		}
+	} else if err != nil {
+		return fmt.Errorf("failed to get device: %w", err)
+	} else if device.Version != req.Version {
+		slog.Debug("user updated device", "new_version", req.Version)
+		// Version changed, create new device record
+		var user User
+		user.UID = req.UserID
+		if err := user.Get(ctx, d); err != nil {
+			return fmt.Errorf("failed to get user: %w", err)
+		}
+		device.UserID = user.ID
+		if err := device.Insert(ctx, d); err != nil {
+			return fmt.Errorf("failed to insert device: %w", err)
+		}
+	} else {
+		if err := device.UpdateLastSignIn(ctx, d); err != nil {
+			return fmt.Errorf("failed to update last sign in: %w", err)
+		}
+		slog.Debug("device online")
+	}
+	return nil
 }
 
 type requestGetUserBalance struct {
@@ -52,7 +136,7 @@ func WithUserID(userID string) requestGetUserBalanceOption {
 	}
 }
 
-func getBalance(ctx context.Context, opts ...requestGetUserBalanceOption) (rp.BalanceV1, error) {
+func getBalance(ctx context.Context, d *sql.DB, opts ...requestGetUserBalanceOption) (rp.BalanceV1, error) {
 	var req requestGetUserBalance
 	for _, opt := range opts {
 		opt(&req)
@@ -73,10 +157,10 @@ func getBalance(ctx context.Context, opts ...requestGetUserBalanceOption) (rp.Ba
 		FROM users`
 	var err error
 	if req.ID != nil {
-		err = db.D.QueryRowContext(ctx, mainQuery+" WHERE id = ?", req.ID).
+		err = d.QueryRowContext(ctx, mainQuery+" WHERE id = ?", req.ID).
 			Scan(&q.Balance, &q.TotalAirdropped, &q.Dollars, &q.Images, &q.Searches)
 	} else if req.UserID != nil {
-		err = db.D.QueryRowContext(ctx, mainQuery+" WHERE uid = ?", req.UserID).
+		err = d.QueryRowContext(ctx, mainQuery+" WHERE uid = ?", req.UserID).
 			Scan(&q.Balance, &q.TotalAirdropped, &q.Dollars, &q.Images, &q.Searches)
 	}
 	if err != nil {
