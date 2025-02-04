@@ -370,3 +370,48 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(rp.MemoriesV1{Memories: memories.LongTerm})
 }
+
+// - MARK: feedback
+
+func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
+	tok, err := s.sc.Auth.VerifyToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var bod rq.FeedbackV1
+	if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = tok.Check(bod)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	// Get the device ID from the request
+	device := users.UserDevice{DeviceUID: bod.DeviceID}
+	if err := device.Get(r.Context(), db.D); err != nil {
+		slog.Error("failed to get device", "error", err, "deviceID", bod.DeviceID)
+		http.Error(w, "Invalid device ID", http.StatusBadRequest)
+		return
+	}
+
+	// Create and insert the feedback
+	feedback := users.UserFeedback{
+		DeviceID: device.ID,
+		Type:     bod.Type,
+		Feedback: bod.Feedback,
+	}
+
+	if err := feedback.Insert(r.Context(), db.D); err != nil {
+		slog.Error("failed to insert feedback",
+			"error", err,
+			"request", bod)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+}

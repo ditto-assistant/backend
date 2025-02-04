@@ -80,6 +80,7 @@ func main() {
 	mux.HandleFunc("POST /v1/generate-image", v1Client.GenerateImage)
 	mux.HandleFunc("POST /v1/presign-url", v1Client.PresignURL)
 	mux.HandleFunc("POST /v1/get-memories", v1Client.GetMemories)
+	mux.HandleFunc("POST /v1/feedback", v1Client.Feedback)
 	mux.HandleFunc("POST /v1/stripe/checkout-session", stripeClient.CreateCheckoutSession)
 	mux.HandleFunc("POST /v1/stripe/webhook", stripeClient.HandleWebhook)
 

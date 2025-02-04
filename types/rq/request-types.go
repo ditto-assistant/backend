@@ -136,3 +136,12 @@ type ParamsShortTermMemoriesV2 struct {
 }
 
 func (g *GetMemoriesV2) GetUserID() string { return g.UserID }
+
+type FeedbackV1 struct {
+	UserID   string `json:"userID"`
+	DeviceID string `json:"deviceId"`
+	Type     string `json:"type"` // bug, feature-request, other
+	Feedback string `json:"feedback"`
+}
+
+func (f FeedbackV1) GetUserID() string { return f.UserID }
