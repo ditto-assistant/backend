@@ -107,7 +107,7 @@ func main() {
 		}
 		user := users.User{UID: bod.UserID}
 		ctx := r.Context()
-		if err := user.Get(ctx, db.D); err != nil {
+		if err := user.GetByUID(ctx, db.D); err != nil {
 			slog.Error("failed to get user", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -229,7 +229,7 @@ func main() {
 		}
 		user := users.User{UID: bod.UserID}
 		ctx := r.Context()
-		if err := user.Get(ctx, db.D); err != nil {
+		if err := user.GetByUID(ctx, db.D); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

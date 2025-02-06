@@ -20,14 +20,15 @@ type UserDevice struct {
 
 // Insert inserts a new user device into the database.
 // It updates the UserDevice's ID with the ID from the database.
-func (u *UserDevice) Insert(ctx context.Context, d *sql.DB) error {
+// If a device with the same user_id, device_uid and version exists,
+// it will fail with a constraint error.
+func (ud *UserDevice) Insert(ctx context.Context, d *sql.DB) error {
 	res, err := d.ExecContext(ctx,
 		`INSERT INTO user_devices (
 			user_id, device_uid, user_agent, 
-			version, platform, accept_language, comment
-		) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		u.UserID, u.DeviceUID, u.UserAgent, u.Version,
-		u.Platform, u.AcceptLanguage, u.Comment)
+			version, platform, accept_language, last_sign_in
+		) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+		ud.UserID, ud.DeviceUID, ud.UserAgent, ud.Version, ud.Platform, ud.AcceptLanguage)
 	if err != nil {
 		return err
 	}
@@ -35,18 +36,34 @@ func (u *UserDevice) Insert(ctx context.Context, d *sql.DB) error {
 	if err != nil {
 		return err
 	}
-	u.ID = id
+	ud.ID = id
 	return nil
 }
 
 // Get gets a user device by its device_uid.
-func (u *UserDevice) Get(ctx context.Context, d *sql.DB) error {
+func (ud *UserDevice) Get(ctx context.Context, d *sql.DB) error {
 	return d.QueryRowContext(ctx,
 		`SELECT id, user_id, last_sign_in, user_agent, 
 		        version, platform, accept_language, comment 
-		 FROM user_devices WHERE device_uid = ?`, u.DeviceUID).
-		Scan(&u.ID, &u.UserID, &u.LastSignIn, &u.UserAgent,
-			&u.Version, &u.Platform, &u.AcceptLanguage, &u.Comment)
+		 FROM user_devices WHERE device_uid = ?`, ud.DeviceUID).
+		Scan(&ud.ID, &ud.UserID, &ud.LastSignIn, &ud.UserAgent,
+			&ud.Version, &ud.Platform, &ud.AcceptLanguage, &ud.Comment)
+}
+
+// Exists checks if a device exists by its device_uid and version.
+func (ud *UserDevice) Exists(ctx context.Context, d *sql.DB) (bool, error) {
+	err := d.QueryRowContext(ctx,
+		`SELECT id FROM user_devices 
+		 WHERE device_uid = ? AND version = ? AND user_id = ?`,
+		ud.DeviceUID, ud.Version, ud.UserID).
+		Scan(&ud.ID)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // GetByUserID gets all devices for a user.
@@ -76,8 +93,8 @@ func GetDevicesByUserID(ctx context.Context, d *sql.DB, userID int64) ([]UserDev
 }
 
 // UpdateLastSignIn updates the last_sign_in timestamp for a device
-func (u *UserDevice) UpdateLastSignIn(ctx context.Context, d *sql.DB) error {
+func (ud *UserDevice) UpdateLastSignIn(ctx context.Context, d *sql.DB) error {
 	_, err := d.ExecContext(ctx,
-		"UPDATE user_devices SET last_sign_in = CURRENT_TIMESTAMP WHERE id = ?", u.ID)
+		"UPDATE user_devices SET last_sign_in = CURRENT_TIMESTAMP WHERE id = ?", ud.ID)
 	return err
 }
