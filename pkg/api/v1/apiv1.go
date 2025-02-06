@@ -385,7 +385,7 @@ func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var bod rq.FeedbackV1
-	if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+	if err := bod.FromForm(r); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -394,22 +394,33 @@ func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-
-	// Get the device ID from the request
-	device := users.UserDevice{DeviceUID: bod.DeviceID}
-	if err := device.Get(r.Context(), db.D); err != nil {
+	var u users.User
+	if err := u.GetByUID(r.Context(), db.D); err != nil {
+		slog.Error("failed to get user", "error", err, "userID", bod.UserID)
+		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+		return
+	}
+	device := users.UserDevice{
+		UserID:    u.ID,
+		DeviceUID: bod.DeviceID,
+		Version:   bod.Version,
+	}
+	exists, err := device.Exists(r.Context(), db.D)
+	if err != nil {
 		slog.Error("failed to get device", "error", err, "deviceID", bod.DeviceID)
 		http.Error(w, "Invalid device ID", http.StatusBadRequest)
 		return
 	}
-
-	// Create and insert the feedback
+	if !exists {
+		slog.Error("device not found", "deviceID", bod.DeviceID)
+		http.Error(w, "Invalid device ID", http.StatusBadRequest)
+		return
+	}
 	feedback := users.UserFeedback{
 		DeviceID: device.ID,
 		Type:     bod.Type,
 		Feedback: bod.Feedback,
 	}
-
 	if err := feedback.Insert(r.Context(), db.D); err != nil {
 		slog.Error("failed to insert feedback",
 			"error", err,
@@ -417,6 +428,5 @@ func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
 	w.WriteHeader(http.StatusCreated)
 }
