@@ -37,19 +37,19 @@ func (u *User) Insert(ctx context.Context, d *sql.DB) error {
 
 var userCache, _ = mapcache.New[string, User](mapcache.WithTTL(time.Minute))
 
-// Get gets a user by their UID.
+// GetByUID gets a user id, balance, and email by their UID.
 // If the user does not exist, it creates a new user.
-func (u *User) Get(ctx context.Context, d *sql.DB) (err error) {
+func (u *User) GetByUID(ctx context.Context, d *sql.DB) (err error) {
 	*u, err = userCache.Get(u.UID, func() (User, error) {
 		usr := User{UID: u.UID}
 		err := d.QueryRowContext(ctx,
 			"SELECT id, balance, email FROM users WHERE uid = ?", u.UID).
 			Scan(&usr.ID, &usr.Balance, &usr.Email)
-		if err == sql.ErrNoRows {
-			err = usr.Insert(ctx, d)
+		if err != nil {
+			return usr, err
 		}
 		slog.Debug("got user", "uid", usr.UID, "id", usr.ID, "balance", usr.Balance, "email", usr.Email.String)
-		return usr, err
+		return usr, nil
 	})
 	return err
 }
