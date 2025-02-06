@@ -104,7 +104,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		err = tok.Check(bod)
+		err = tok.Check(bod.UserID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -226,7 +226,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		err = tok.Check(bod)
+		err = tok.Check(bod.UserID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
@@ -286,7 +286,7 @@ func main() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		err = tok.Check(bod)
+		err = tok.Check(bod.UserID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 		}

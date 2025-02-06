@@ -33,10 +33,6 @@ type requestCreateCheckoutSession struct {
 	USD        int64   `json:"usd"`
 }
 
-func (r requestCreateCheckoutSession) GetUserID() string {
-	return r.UserID
-}
-
 const secretKeyId = "STRIPE_SECRET_KEY"
 
 func (cl *Client) setupCheckoutSession(ctx context.Context) error {
@@ -92,7 +88,7 @@ func (cl *Client) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) 
 		CancelURL:  ptr(r.FormValue("cancelURL")),
 		USD:        usd,
 	}
-	err = tok.Check(bod)
+	err = tok.Check(bod.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
