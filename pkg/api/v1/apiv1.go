@@ -73,7 +73,7 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = tok.Check(bod)
+	err = tok.Check(bod.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -106,7 +106,7 @@ func (s *Service) WebSearch(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	err = tok.Check(bod)
+	err = tok.Check(bod.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -151,7 +151,7 @@ func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = tok.Check(bod)
+	err = tok.Check(bod.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -248,7 +248,7 @@ func (s *Service) PresignURL(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = tok.Check(bod)
+	err = tok.Check(bod.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -298,7 +298,7 @@ func (s *Service) CreateUploadURL(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = tok.Check(bod)
+	err = tok.Check(bod.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -333,7 +333,7 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	err = tok.Check(req)
+	err = tok.Check(req.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -379,7 +379,7 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 // - MARK: feedback
 
 func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
-	tok, err := s.sc.Auth.VerifyToken(r)
+	tok, err := s.sc.Auth.VerifyTokenFromForm(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
@@ -389,15 +389,16 @@ func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	err = tok.Check(bod)
+	err = tok.Check(bod.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	var u users.User
+	u := users.User{UID: bod.UserID}
 	if err := u.GetByUID(r.Context(), db.D); err != nil {
 		slog.Error("failed to get user", "error", err, "userID", bod.UserID)
-		http.Error(w, "Invalid user ID", http.StatusBadRequest)
+		bod.Redirect.Query().Add("error", "Invalid user ID")
+		http.Redirect(w, r, bod.Redirect.String(), http.StatusSeeOther)
 		return
 	}
 	device := users.UserDevice{
@@ -408,12 +409,14 @@ func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
 	exists, err := device.Exists(r.Context(), db.D)
 	if err != nil {
 		slog.Error("failed to get device", "error", err, "deviceID", bod.DeviceID)
-		http.Error(w, "Invalid device ID", http.StatusBadRequest)
+		bod.Redirect.Query().Add("error", "Invalid device ID")
+		http.Redirect(w, r, bod.Redirect.String(), http.StatusSeeOther)
 		return
 	}
 	if !exists {
 		slog.Error("device not found", "deviceID", bod.DeviceID)
-		http.Error(w, "Invalid device ID", http.StatusBadRequest)
+		bod.Redirect.Query().Add("error", "Invalid device ID")
+		http.Redirect(w, r, bod.Redirect.String(), http.StatusSeeOther)
 		return
 	}
 	feedback := users.UserFeedback{
@@ -422,11 +425,15 @@ func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
 		Feedback: bod.Feedback,
 	}
 	if err := feedback.Insert(r.Context(), db.D); err != nil {
-		slog.Error("failed to insert feedback",
-			"error", err,
-			"request", bod)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.Error("failed to insert feedback", "error", err, "request", bod)
+		bod.Redirect.Query().Add("error", "Failed to insert feedback")
+		http.Redirect(w, r, bod.Redirect.String(), http.StatusSeeOther)
 		return
 	}
-	w.WriteHeader(http.StatusCreated)
+	slog.Debug("feedback inserted",
+		"email", u.Email.String,
+		"version", bod.Version,
+		"type", bod.Type,
+		"feedback", bod.Feedback)
+	http.Redirect(w, r, bod.Redirect.String(), http.StatusSeeOther)
 }

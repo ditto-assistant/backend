@@ -36,7 +36,7 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	err = tok.Check(&req)
+	err = tok.Check(req.UserID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
