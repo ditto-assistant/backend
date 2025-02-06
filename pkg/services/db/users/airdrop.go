@@ -59,7 +59,7 @@ func handleAirdrop(
 	}
 	var q User
 	err := d.QueryRowContext(ctx, `
-		SELECT id, uid, email, last_airdrop_at FROM users WHERE uid = ? OR email = ?`, req.UserID, req.Email).
+		SELECT id, uid, email, last_airdrop_at FROM users WHERE email = ? OR uid = ?`, req.Email, req.UserID).
 		Scan(&q.ID, &q.UID, &q.Email, &q.LastAirdropAt)
 	if err == sql.ErrNoRows {
 		// New user - create account with airdrop
