@@ -40,8 +40,8 @@ func (ud *UserDevice) Insert(ctx context.Context, d *sql.DB) error {
 	return nil
 }
 
-// Get gets a user device by its device_uid.
-func (ud *UserDevice) Get(ctx context.Context, d *sql.DB) error {
+// GetByUID gets a user device by its device_uid.
+func (ud *UserDevice) GetByUID(ctx context.Context, d *sql.DB) error {
 	return d.QueryRowContext(ctx,
 		`SELECT id, user_id, last_sign_in, user_agent, 
 		        version, platform, accept_language, comment 

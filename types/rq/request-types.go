@@ -141,8 +141,21 @@ func (g *GetMemoriesV2) GetUserID() string { return g.UserID }
 type FeedbackV1 struct {
 	UserID   string `json:"userID"`
 	DeviceID string `json:"deviceId"`
+	Version  string `json:"version"`
 	Type     string `json:"type"` // bug, feature-request, other
 	Feedback string `json:"feedback"`
 }
 
 func (f FeedbackV1) GetUserID() string { return f.UserID }
+
+func (f *FeedbackV1) FromForm(r *http.Request) error {
+	if err := r.ParseForm(); err != nil {
+		return err
+	}
+	f.UserID = r.PostForm.Get("userID")
+	f.DeviceID = r.PostForm.Get("deviceId")
+	f.Version = r.PostForm.Get("version")
+	f.Type = r.PostForm.Get("type")
+	f.Feedback = r.PostForm.Get("feedback")
+	return nil
+}
