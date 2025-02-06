@@ -116,7 +116,8 @@ func (s *Service) WebSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	user := users.User{UID: bod.UserID}
 	ctx := r.Context()
-	if err := user.Get(ctx, db.D); err != nil {
+	if err := user.GetByUID(ctx, db.D); err != nil {
+		slog.Error("failed to get user", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -157,7 +158,7 @@ func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
 	}
 	user := users.User{UID: bod.UserID}
 	ctx := r.Context()
-	if err := user.Get(ctx, db.D); err != nil {
+	if err := user.GetByUID(ctx, db.D); err != nil {
 		slog.Error("failed to get user", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -165,6 +166,10 @@ func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
 	slog := slog.With("userID", bod.UserID, "model", bod.Model, "email", user.Email.String)
 	if user.Balance <= 0 {
 		http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
+		return
+	}
+	if bod.DummyMode {
+		fmt.Fprintln(w, envs.DALLE_E_DUMMY_LINK)
 		return
 	}
 	url, err := s.dalle.Prompt(ctx, &bod)

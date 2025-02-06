@@ -12,18 +12,21 @@ import (
 
 // Aidrop tokens every 24 hours when the user logs in
 const airdropTokens = 20_000_000
+const initialAirdropTokens = 250_000_000
 
 type airdropConfig struct {
-	Period time.Duration // How often airdrops can occur
-	Amount int64         // How many tokens to airdrop
+	Period        time.Duration // How often airdrops can occur
+	Amount        int64         // How many tokens to airdrop
+	InitialAmount int64         // How many tokens to airdrop when the user is created
 }
 
 type airdropOption func(*airdropConfig)
 
 func defaultAirdropConfig() airdropConfig {
 	return airdropConfig{
-		Period: 24 * time.Hour,
-		Amount: airdropTokens,
+		Period:        time.Hour * 24,
+		Amount:        airdropTokens,
+		InitialAmount: initialAirdropTokens,
 	}
 }
 
@@ -60,20 +63,26 @@ func handleAirdrop(
 		Scan(&q.ID, &q.UID, &q.Email, &q.LastAirdropAt)
 	if err == sql.ErrNoRows {
 		// New user - create account with airdrop
+		amt := cfg.InitialAmount
+		if req.Email == "" {
+			amt = 0
+		}
 		user := User{
 			UID:                   req.UserID,
-			Email:                 sql.NullString{String: req.Email, Valid: true},
-			Balance:               cfg.Amount,
-			TotalTokensAirdropped: cfg.Amount,
-			LastAirdropAt:         sql.NullTime{Time: time.Now(), Valid: true},
+			Email:                 sql.NullString{String: req.Email, Valid: req.Email != ""},
+			Balance:               amt,
+			TotalTokensAirdropped: amt,
 		}
 		if err := user.Insert(ctx, d); err != nil {
 			return nil, fmt.Errorf("failed to insert new user: %w", err)
 		}
-		return &resultAirdrop{ID: user.ID, DropAmount: cfg.Amount}, nil
+		return &resultAirdrop{ID: user.ID, DropAmount: amt}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to get user: %w", err)
+	}
+	if !q.Email.Valid && req.Email == "" {
+		return &resultAirdrop{ID: q.ID}, nil
 	}
 
 	if q.Email.Valid &&
@@ -95,17 +104,17 @@ func handleAirdrop(
 		slog.Info("updated user email", "uid", req.UserID, "email", req.Email)
 	}
 
-	if !q.LastAirdropAt.Valid || time.Since(q.LastAirdropAt.Time) > cfg.Period {
-		_, err = d.ExecContext(ctx, `
+	if q.LastAirdropAt.Valid && time.Since(q.LastAirdropAt.Time) < cfg.Period {
+		return &resultAirdrop{ID: q.ID}, nil
+	}
+	_, err = d.ExecContext(ctx, `
 			UPDATE users SET
 				balance = balance + ?,
 				total_tokens_airdropped = total_tokens_airdropped + ?,
 				last_airdrop_at = CURRENT_TIMESTAMP
 			WHERE id = ?`, cfg.Amount, cfg.Amount, q.ID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to airdrop tokens: %w", err)
-		}
-		return &resultAirdrop{ID: q.ID, DropAmount: cfg.Amount}, nil
+	if err != nil {
+		return nil, fmt.Errorf("failed to airdrop tokens: %w", err)
 	}
-	return &resultAirdrop{ID: q.ID}, nil
+	return &resultAirdrop{ID: q.ID, DropAmount: cfg.Amount}, nil
 }

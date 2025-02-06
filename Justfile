@@ -32,6 +32,10 @@ search *ARGS:
 build:
 	docker build -t ditto-backend .
 
+push-tag-number:
+	git tag -a $VERSION -m "Release $VERSION"
+	git push origin $VERSION
+
 push-new-tag dry-run="false":
     #!/usr/bin/env bash
     # Get the latest tag from GitHub
@@ -53,3 +57,17 @@ push-new-tag dry-run="false":
         git tag -a $NEW_TAG -m "Release $NEW_TAG"
         git push origin $NEW_TAG
     fi
+
+# get the latest tag
+@version:
+	git describe --tags `git rev-list --tags --max-count=1`
+
+# create a github release for the latest tag with auto-generated release notes
+gh-release:
+	#!/bin/sh
+	VERSION=$(just version)
+	gh release create $VERSION --generate-notes
+
+# create a new release for the latest tag with auto-generated release notes
+create-patch-release: push-new-tag gh-release
+alias cpr := create-patch-release
