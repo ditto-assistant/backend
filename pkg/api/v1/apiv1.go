@@ -379,6 +379,7 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 // - MARK: feedback
 
 func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
+	slog := slog.With("path", "v1/feedback")
 	tok, err := s.sc.Auth.VerifyTokenFromForm(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
@@ -386,6 +387,7 @@ func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
 	}
 	var bod rq.FeedbackV1
 	if err := bod.FromForm(r); err != nil {
+		slog.Debug("failed to parse request", "error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -397,8 +399,7 @@ func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
 	u := users.User{UID: bod.UserID}
 	if err := u.GetByUID(r.Context(), db.D); err != nil {
 		slog.Error("failed to get user", "error", err, "userID", bod.UserID)
-		bod.Redirect.Query().Add("error", "Invalid user ID")
-		http.Redirect(w, r, bod.Redirect.String(), http.StatusSeeOther)
+		http.Error(w, "Invalid user ID", http.StatusBadRequest)
 		return
 	}
 	device := users.UserDevice{
@@ -409,14 +410,12 @@ func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
 	exists, err := device.Exists(r.Context(), db.D)
 	if err != nil {
 		slog.Error("failed to get device", "error", err, "deviceID", bod.DeviceID)
-		bod.Redirect.Query().Add("error", "Invalid device ID")
-		http.Redirect(w, r, bod.Redirect.String(), http.StatusSeeOther)
+		http.Error(w, "Invalid device ID", http.StatusBadRequest)
 		return
 	}
 	if !exists {
 		slog.Error("device not found", "deviceID", bod.DeviceID)
-		bod.Redirect.Query().Add("error", "Invalid device ID")
-		http.Redirect(w, r, bod.Redirect.String(), http.StatusSeeOther)
+		http.Error(w, "Invalid device ID", http.StatusBadRequest)
 		return
 	}
 	feedback := users.UserFeedback{
@@ -426,8 +425,7 @@ func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := feedback.Insert(r.Context(), db.D); err != nil {
 		slog.Error("failed to insert feedback", "error", err, "request", bod)
-		bod.Redirect.Query().Add("error", "Failed to insert feedback")
-		http.Redirect(w, r, bod.Redirect.String(), http.StatusSeeOther)
+		http.Error(w, "Failed to insert feedback", http.StatusInternalServerError)
 		return
 	}
 	slog.Debug("feedback inserted",
@@ -435,5 +433,5 @@ func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
 		"version", bod.Version,
 		"type", bod.Type,
 		"feedback", bod.Feedback)
-	http.Redirect(w, r, bod.Redirect.String(), http.StatusSeeOther)
+	w.WriteHeader(http.StatusCreated)
 }

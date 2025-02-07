@@ -53,7 +53,7 @@ func (cl *Client) setupCheckoutSession(ctx context.Context) error {
 		return err
 	}
 	stripe.Key = stripeKey
-	slog.Debug("stripe secret key set", "secret_id", secretKeyId)
+	slog.Debug("loaded stripe secret key", "secret_id", secretKeyId)
 	return nil
 }
 
@@ -62,36 +62,28 @@ func (cl *Client) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Parse the form data
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	// Get authorization from form
-	authHeader := r.FormValue("authorization")
-	r.Header.Set("Authorization", authHeader)
-	tok, err := cl.auth.VerifyToken(r)
+	tok, err := cl.auth.VerifyTokenFromForm(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	// Parse form values into our request struct
+	userID := r.FormValue("userID")
+	err = tok.Check(userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
 	usd, err := strconv.ParseInt(r.FormValue("usd"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid USD amount", http.StatusBadRequest)
 		return
 	}
 	bod := requestCreateCheckoutSession{
-		UserID:     r.FormValue("userID"),
+		UserID:     userID,
 		Email:      ptr(r.FormValue("email")),
 		SuccessURL: ptr(r.FormValue("successURL")),
 		CancelURL:  ptr(r.FormValue("cancelURL")),
 		USD:        usd,
-	}
-	err = tok.Check(bod.UserID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
 	}
 
 	var priceID string
