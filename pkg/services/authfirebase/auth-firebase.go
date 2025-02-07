@@ -21,10 +21,6 @@ func NewClient(auth *auth.Client) *Client {
 type AuthToken auth.Token
 
 func (a *Client) VerifyTokenFromForm(r *http.Request) (*AuthToken, error) {
-	err := r.ParseForm()
-	if err != nil {
-		return nil, fmt.Errorf("error parsing form: %w", err)
-	}
 	token := r.FormValue("authorization")
 	return a.verifyToken(r.Context(), token)
 }

@@ -3,7 +3,6 @@ package rq
 import (
 	"errors"
 	"net/http"
-	"net/url"
 	"strconv"
 
 	"github.com/ditto-assistant/backend/pkg/services/llm"
@@ -119,19 +118,28 @@ type FeedbackV1 struct {
 	Version  string
 	Type     string // bug, feature-request, other
 	Feedback string
-	Redirect *url.URL
 }
 
 func (f *FeedbackV1) FromForm(r *http.Request) error {
 	f.UserID = r.FormValue("userID")
-	f.DeviceID = r.FormValue("deviceID")
-	f.Version = r.FormValue("version")
-	f.Type = r.FormValue("type")
-	f.Feedback = r.FormValue("feedback")
-	redirect, err := url.Parse(r.FormValue("redirect"))
-	if err != nil {
-		return err
+	if f.UserID == "" {
+		return errors.New("userID is required")
 	}
-	f.Redirect = redirect
+	f.DeviceID = r.FormValue("deviceID")
+	if f.DeviceID == "" {
+		return errors.New("deviceID is required")
+	}
+	f.Version = r.FormValue("version")
+	if f.Version == "" {
+		return errors.New("version is required")
+	}
+	f.Type = r.FormValue("type")
+	if f.Type == "" {
+		return errors.New("type is required")
+	}
+	f.Feedback = r.FormValue("feedback")
+	if f.Feedback == "" {
+		return errors.New("feedback is required")
+	}
 	return nil
 }
