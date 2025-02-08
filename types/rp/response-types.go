@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/firestore"
 	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/pkg/services/filestorage"
 	"golang.org/x/sync/errgroup"
@@ -41,14 +42,15 @@ func (BalanceV1) Zeroes() BalanceV1 {
 
 // Memory represents a conversation memory with vector similarity
 type Memory struct {
-	ID             string    `json:"id"`
-	Score          float32   `json:"score"`
-	Prompt         string    `json:"prompt" firestore:"prompt"`
-	Response       string    `json:"response" firestore:"response"`
-	Timestamp      time.Time `json:"timestamp" firestore:"timestamp"`
-	VectorDistance float32   `json:"vector_distance" firestore:"vector_distance"`
-	// Will be used for depth-based vector memory
-	// EmbeddingVector firestore.Vector32 `json:"-" firestore:"embedding_vector"`
+	ID              string             `json:"id"`
+	Score           float32            `json:"score"`
+	Prompt          string             `json:"prompt" firestore:"prompt"`
+	Response        string             `json:"response" firestore:"response"`
+	Timestamp       time.Time          `json:"timestamp" firestore:"timestamp"`
+	VectorDistance  float32            `json:"vector_distance" firestore:"vector_distance"`
+	EmbeddingVector firestore.Vector32 `json:"-" firestore:"embedding_vector"`
+	Depth           int                `json:"depth" firestore:"-"`
+	Children        []Memory           `json:"children,omitempty" firestore:"-"`
 }
 
 // MemoriesV1 represents the response for getting memories
@@ -184,9 +186,12 @@ func (m MemoriesV2) Bytes() []byte {
 		b.WriteString("## Long Term Memory\n")
 		b.WriteString("- Most relevant prompt/response pairs from the user's prompt history are indexed using cosine similarity and are shown below.\n")
 		b.WriteString("<LongTermMemory>\n")
+
+		// Write root memories and their children recursively
 		for _, mem := range m.LongTerm {
-			b.WriteString(mem.String())
+			writeMemoryWithChildren(&b, &mem, 1)
 		}
+
 		b.WriteString("</LongTermMemory>\n\n")
 	}
 	if len(m.ShortTerm) > 0 {
@@ -199,4 +204,27 @@ func (m MemoriesV2) Bytes() []byte {
 		b.WriteString("</ShortTermMemory>\n\n")
 	}
 	return b.Bytes()
+}
+
+// writeMemoryWithChildren recursively writes a memory and its children with proper indentation
+func writeMemoryWithChildren(b *bytes.Buffer, mem *Memory, indent int) {
+	indentStr := strings.Repeat("  ", indent)
+
+	// Write the memory layer opening tag
+	b.WriteString(fmt.Sprintf("%s<MemoryLayer depth=\"%d\">\n", indentStr, mem.Depth))
+
+	// Write the current memory
+	b.WriteString(indentStr + "  " + mem.String())
+
+	// Write children if any exist
+	if len(mem.Children) > 0 {
+		b.WriteString(fmt.Sprintf("%s  <RelatedMemories>\n", indentStr))
+		for _, child := range mem.Children {
+			writeMemoryWithChildren(b, &child, indent+2)
+		}
+		b.WriteString(fmt.Sprintf("%s  </RelatedMemories>\n", indentStr))
+	}
+
+	// Write the memory layer closing tag
+	b.WriteString(fmt.Sprintf("%s</MemoryLayer>\n", indentStr))
 }
