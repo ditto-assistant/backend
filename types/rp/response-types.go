@@ -173,7 +173,7 @@ func TrimStuff(s *string, prefix, suffix string, replaceFunc func(*string) error
 }
 
 func (mem *Memory) String() string {
-	return fmt.Sprintf("User (%s): %s\nDitto: %s\n",
+	return fmt.Sprintf("<Memory timestamp=\"%s\">\n  <User>%s</User>\n  <Ditto>%s</Ditto>\n</Memory>\n",
 		mem.Timestamp.Format("2006-01-02 15:04:05"),
 		mem.Prompt,
 		mem.Response,
@@ -182,27 +182,27 @@ func (mem *Memory) String() string {
 
 func (m MemoriesV2) Bytes() []byte {
 	var b bytes.Buffer
+	b.WriteString("<Memories>\n")
 	if len(m.LongTerm) > 0 {
-		b.WriteString("## Long Term Memory\n")
-		b.WriteString("- Most relevant prompt/response pairs from the user's prompt history are indexed using cosine similarity and are shown below.\n")
-		b.WriteString("<LongTermMemory>\n")
+		b.WriteString("  <LongTermMemory type=\"cosine-similarity\">\n")
+		b.WriteString("    <!-- Most relevant prompt/response pairs from user's prompt history -->\n")
 
 		// Write root memories and their children recursively
 		for _, mem := range m.LongTerm {
-			writeMemoryWithChildren(&b, &mem, 1)
+			writeMemoryWithChildren(&b, &mem, 2)
 		}
 
-		b.WriteString("</LongTermMemory>\n\n")
+		b.WriteString("  </LongTermMemory>\n")
 	}
 	if len(m.ShortTerm) > 0 {
-		b.WriteString("## Short Term Memory\n")
-		b.WriteString("- Most recent prompt/response pairs are shown below.\n")
-		b.WriteString("<ShortTermMemory>\n")
+		b.WriteString("  <ShortTermMemory type=\"recent\">\n")
+		b.WriteString("    <!-- Most recent prompt/response pairs -->\n")
 		for _, mem := range m.ShortTerm {
-			b.WriteString(mem.String())
+			b.WriteString("    " + mem.String())
 		}
-		b.WriteString("</ShortTermMemory>\n\n")
+		b.WriteString("  </ShortTermMemory>\n")
 	}
+	b.WriteString("</Memories>")
 	return b.Bytes()
 }
 
