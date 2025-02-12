@@ -66,7 +66,7 @@ func (cl *Client) Embed(ctx context.Context, req EmbedRequest) ([]llm.Embedding,
 				StructValue: &structpb.Struct{
 					Fields: map[string]*structpb.Value{
 						"content":   structpb.NewStringValue(doc),
-						"task_type": structpb.NewStringValue("RETRIEVAL_DOCUMENT"),
+						"task_type": structpb.NewStringValue("SEMANTIC_SIMILARITY"),
 					},
 				},
 			},
