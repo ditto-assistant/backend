@@ -48,10 +48,7 @@ func (cl *Client) GetMemoriesV2(ctx context.Context, req *rq.GetMemoriesV2) (rp.
 }
 
 func (cl *Client) getShort(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memory, error) {
-	if req.ShortTerm == nil {
-		return nil, nil
-	}
-	if req.ShortTerm.K == 0 {
+	if req.ShortTerm == nil || req.ShortTerm.K == 0 {
 		return nil, nil
 	}
 	memoriesRef := cl.firestore.Collection("memory").Doc(req.UserID).Collection("conversations")
@@ -104,7 +101,7 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 		firestore.DistanceMeasureDotProduct,
 		&firestore.FindNearestOptions{
 			DistanceResultField: "vector_distance",
-			DistanceThreshold:   firestore.Ptr(0.75),
+			DistanceThreshold:   firestore.Ptr(0.3),
 		})
 	querySnapshot, err := vectorQuery.Documents(ctx).GetAll()
 	if err != nil {
@@ -154,7 +151,7 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 			firestore.DistanceMeasureDotProduct,
 			&firestore.FindNearestOptions{
 				DistanceResultField: "vector_distance",
-				DistanceThreshold:   firestore.Ptr(0.3),
+				DistanceThreshold:   firestore.Ptr(0.1),
 			})
 
 		querySnapshot, err := vectorQuery.Documents(ctx).GetAll()
