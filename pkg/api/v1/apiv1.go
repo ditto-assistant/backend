@@ -369,7 +369,7 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		slog.Error("Failed to get memories", "error", err)
-		http.Error(w, "Failed to get memories", http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
