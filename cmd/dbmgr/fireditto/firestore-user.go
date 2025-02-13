@@ -2,40 +2,26 @@ package fireditto
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
 
+	"cloud.google.com/go/firestore"
 	firebase "firebase.google.com/go/v4"
 	"github.com/ditto-assistant/backend/types/rp"
 )
 
-func (f *Command) PrintUser(ctx context.Context) error {
-	email, userID := f.Email, f.UID
-	app, err := firebase.NewApp(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("error creating firebase app: %w", err)
+func (f *Command) printUser(ctx context.Context) error {
+	if err := f.initFirebase(ctx); err != nil {
+		return err
 	}
-	// If email is provided, get the user ID first
-	if email != "" {
-		auth, err := app.Auth(ctx)
-		if err != nil {
-			return fmt.Errorf("error getting auth client: %w", err)
-		}
-		user, err := auth.GetUserByEmail(ctx, email)
-		if err != nil {
-			return fmt.Errorf("error getting user by email: %w", err)
-		}
-		userID = user.UID
-		slog.Info("User ID", "userID", userID)
+	if err := f.getUserByEmail(ctx); err != nil {
+		return err
 	}
-	fs, err := app.Firestore(ctx)
-	if err != nil {
-		return fmt.Errorf("error getting firestore client: %w", err)
-	}
-	convDocs, err := fs.
+	convDocs, err := f.fs.
 		Collection("memory").
-		Doc(userID).
+		Doc(f.UID).
 		Collection("conversations").
 		OrderBy("timestamp", f.Order()).
 		Limit(f.User.Limit).
@@ -45,7 +31,7 @@ func (f *Command) PrintUser(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("error getting conversations from Firestore: %w", err)
 	}
-	slog.Info("User conversations", "userID", userID, "count", len(convDocs))
+	slog.Info("User conversations", "userID", f.UID, "count", len(convDocs))
 	for _, doc := range convDocs {
 		var conv struct {
 			Prompt    string    `firestore:"prompt"`
@@ -85,6 +71,78 @@ func (f *Command) PrintUser(ctx context.Context) error {
 	return nil
 }
 
-func (f *Command) EmbedConversations(ctx context.Context) error {
+func (f *Command) initFirebase(ctx context.Context) error {
+	app, err := firebase.NewApp(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("error creating firebase app: %w", err)
+	}
+	fs, err := app.Firestore(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting firestore client: %w", err)
+	}
+	f.fs = fs
+	auth, err := app.Auth(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting auth client: %w", err)
+	}
+	f.auth = auth
+	return nil
+}
+
+func (f *Command) getUserByEmail(ctx context.Context) error {
+	if f.Email != "" {
+		user, err := f.auth.GetUserByEmail(ctx, f.Email)
+		if err != nil {
+			return fmt.Errorf("error getting user by email: %w", err)
+		}
+		f.UID = user.UID
+		slog.Info("User ID", "userID", f.UID)
+	}
+	return nil
+}
+
+func (f *Command) embedMem(ctx context.Context) error {
+	if err := f.initFirebase(ctx); err != nil {
+		return err
+	}
+	if err := f.getUserByEmail(ctx); err != nil {
+		return err
+	}
+	if f.UID == "" && !f.Mem.AllUsers {
+		return errors.New("user ID is empty")
+	}
+	fmt.Printf("embed command: %+v\nzero time: %v\n", f.Mem.Embed, f.Mem.Embed.Start.Time().IsZero())
+	return nil
+}
+
+func (f *Command) deleteColumn(ctx context.Context) error {
+	if err := f.initFirebase(ctx); err != nil {
+		return err
+	}
+	if err := f.getUserByEmail(ctx); err != nil {
+		return err
+	}
+	if f.UID == "" && !f.Mem.AllUsers {
+		return errors.New("user ID is empty")
+	}
+	slog.Info("Starting column deletion", "column", f.Mem.DeleteColumn, "userID", f.UID)
+	bulkWriter := f.fs.BulkWriter(ctx)
+	defer func() {
+		bulkWriter.End()
+		slog.Info("Successfully deleted column from all documents", "column", f.Mem.DeleteColumn)
+	}()
+	docs, err := f.fs.Collection("memory").Doc(f.UID).Collection("conversations").Documents(ctx).GetAll()
+	if err != nil {
+		return fmt.Errorf("error getting memory docs: %w", err)
+	}
+	slog.Info("Found documents to update", "count", len(docs))
+	for _, doc := range docs {
+		_, err := bulkWriter.Update(doc.Ref, []firestore.Update{
+			{Path: f.Mem.DeleteColumn, Value: firestore.Delete},
+		})
+		if err != nil {
+			return fmt.Errorf("error updating document %s: %w", doc.Ref.ID, err)
+		}
+	}
 	return nil
 }

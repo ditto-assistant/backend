@@ -10,11 +10,12 @@ func _() {
 	var x [1]struct{}
 	_ = x[OpGET-0]
 	_ = x[OpEmbed-1]
+	_ = x[OpDeleteColumn-2]
 }
 
-const _Op_name = "GETEmbed"
+const _Op_name = "GETEmbedDeleteColumn"
 
-var _Op_index = [...]uint8{0, 3, 8}
+var _Op_index = [...]uint8{0, 3, 8, 20}
 
 func (i Op) String() string {
 	if i >= Op(len(_Op_index)-1) {

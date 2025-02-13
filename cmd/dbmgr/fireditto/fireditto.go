@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/firestore"
+	"firebase.google.com/go/v4/auth"
 )
 
 //go:generate stringer -type=Mode -trimprefix=Mode
@@ -37,6 +38,7 @@ type Op uint8
 const (
 	OpGET Op = iota
 	OpEmbed
+	OpDeleteColumn
 )
 
 func (o *Op) Parse(operation string) error {
@@ -45,6 +47,8 @@ func (o *Op) Parse(operation string) error {
 		*o = OpGET
 	case "embed":
 		*o = OpEmbed
+	case "delcol", "delete-column":
+		*o = OpDeleteColumn
 	default:
 		return fmt.Errorf("unknown operation: %s", operation)
 	}
@@ -60,8 +64,12 @@ type Command struct {
 		order         string
 	}
 	Mem struct {
-		Embed CommandEmbed
+		Embed        CommandEmbed
+		DeleteColumn string
+		AllUsers     bool
 	}
+	fs   *firestore.Client
+	auth *auth.Client
 }
 
 type CommandEmbed struct {
@@ -69,6 +77,19 @@ type CommandEmbed struct {
 	EmbedField   string
 	ModelVersion int
 	Start        timeVar
+}
+
+func (e *CommandEmbed) Validate() error {
+	if e.ContentField == "" {
+		return errors.New("content field must be provided")
+	}
+	if e.EmbedField == "" {
+		return errors.New("embed field must be provided")
+	}
+	if e.ModelVersion < 4 || e.ModelVersion > 5 {
+		return fmt.Errorf("invalid model version: %d", e.ModelVersion)
+	}
+	return nil
 }
 
 func (f *Command) Order() firestore.Direction {
@@ -106,10 +127,16 @@ func (f *Command) Parse(args []string) error {
 			return fmt.Errorf("invalid user flags: %s", err)
 		}
 	case ModeMem:
-		firestoreFlags.StringVar(&f.Mem.Embed.ContentField, "content-field", "prompt", "content field")
-		firestoreFlags.StringVar(&f.Mem.Embed.EmbedField, "embed-field", "embedding_vector", "embed field")
-		firestoreFlags.IntVar(&f.Mem.Embed.ModelVersion, "model-version", 5, "model version")
-		firestoreFlags.Var(&f.Mem.Embed.Start, "start", "start time")
+		firestoreFlags.BoolVar(&f.Mem.AllUsers, "all-users", false, "all users")
+		switch f.Operation {
+		case OpEmbed:
+			firestoreFlags.StringVar(&f.Mem.Embed.ContentField, "content-field", "prompt", "content field")
+			firestoreFlags.StringVar(&f.Mem.Embed.EmbedField, "embed-field", "embedding_vector", "embed field")
+			firestoreFlags.IntVar(&f.Mem.Embed.ModelVersion, "model-version", 5, "model version")
+			firestoreFlags.Var(&f.Mem.Embed.Start, "start", "start time")
+		case OpDeleteColumn:
+			firestoreFlags.StringVar(&f.Mem.DeleteColumn, "col", "embedding", "delete column")
+		}
 		firestoreFlags.Parse(args[2:])
 		if err := f.Validate(); err != nil {
 			return fmt.Errorf("invalid mem flags: %s", err)
@@ -125,11 +152,18 @@ func (f *Command) Validate() error {
 			return errors.New("either email or uid must be provided")
 		}
 	case ModeMem:
-		if f.Mem.Embed.ContentField == "" {
-			return errors.New("content field must be provided")
-		}
-		if f.Mem.Embed.EmbedField == "" {
-			return errors.New("embed field must be provided")
+		switch f.Operation {
+		case OpEmbed:
+			if f.Mem.Embed.ContentField == "" {
+				return errors.New("content field must be provided")
+			}
+			if f.Mem.Embed.EmbedField == "" {
+				return errors.New("embed field must be provided")
+			}
+		case OpDeleteColumn:
+			if f.Mem.DeleteColumn == "" {
+				return errors.New("column to delete must be provided")
+			}
 		}
 	}
 	return nil
@@ -138,16 +172,29 @@ func (f *Command) Validate() error {
 func (f *Command) Handle(ctx context.Context) error {
 	switch f.Mode {
 	case ModeUser:
-		return f.HandleUser(ctx)
+		return f.handleUser(ctx)
+	case ModeMem:
+		return f.handleMem(ctx)
 	default:
 		return fmt.Errorf("unknown mode: %s", f.Mode)
 	}
 }
 
-func (f *Command) HandleUser(ctx context.Context) error {
+func (f *Command) handleUser(ctx context.Context) error {
 	switch f.Operation {
 	case OpGET:
-		return f.PrintUser(ctx)
+		return f.printUser(ctx)
+	default:
+		return fmt.Errorf("unknown operation: %s", f.Operation)
+	}
+}
+
+func (f *Command) handleMem(ctx context.Context) error {
+	switch f.Operation {
+	case OpEmbed:
+		return f.embedMem(ctx)
+	case OpDeleteColumn:
+		return f.deleteColumn(ctx)
 	default:
 		return fmt.Errorf("unknown operation: %s", f.Operation)
 	}
@@ -167,4 +214,8 @@ func (t *timeVar) Set(value string) error {
 	}
 	*t = timeVar(parsed)
 	return nil
+}
+
+func (t timeVar) Time() time.Time {
+	return time.Time(t)
 }
