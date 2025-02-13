@@ -57,3 +57,6 @@ func SendRequest(ctx context.Context, url string, body io.Reader) (*http.Respons
 
 	return resp, nil
 }
+
+var PrefixData = []byte("data: ")
+var TokenDone = []byte("[DONE]")

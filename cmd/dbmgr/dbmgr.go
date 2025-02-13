@@ -280,7 +280,7 @@ func testSearch(ctx context.Context, query string) error {
 	}
 
 	// Generate embedding for the query
-	embedding, err := googaiClient.GenerateEmbedding(ctx, query, llm.ModelTextEmbedding004)
+	embedding, _, err := googaiClient.EmbedSingle(ctx, query, llm.ModelTextEmbedding004)
 	if err != nil {
 		return fmt.Errorf("error embedding query: %w", err)
 	}
@@ -418,7 +418,6 @@ func (te ToolExamples) Embed(ctx context.Context, client *googai.Client) error {
 		if end > len(te.Examples) {
 			end = len(te.Examples)
 		}
-
 		// Prepare batch of prompts
 		promptDocs := make([]string, end-i)
 		promptRespDocs := make([]string, end-i)
@@ -426,29 +425,28 @@ func (te ToolExamples) Embed(ctx context.Context, client *googai.Client) error {
 			promptDocs[j-i] = te.Examples[j].Prompt
 			promptRespDocs[j-i] = te.Examples[j].Prompt + " " + te.Examples[j].Response
 		}
-
 		// Get embeddings for prompts
-		promptEmbeddings, err := client.Embed(ctx, googai.EmbedRequest{
+		var promptEmbeddings googai.EmbedResponse
+		req := &googai.EmbedRequest{
 			Documents: promptDocs,
 			Model:     llm.ModelTextEmbedding004,
-		})
+		}
+		err := client.Embed(ctx, req, &promptEmbeddings)
 		if err != nil {
 			return fmt.Errorf("error embedding prompts: %w", err)
 		}
-
 		// Get embeddings for prompt+response combinations
-		promptRespEmbeddings, err := client.Embed(ctx, googai.EmbedRequest{
-			Documents: promptRespDocs,
-			Model:     llm.ModelTextEmbedding004,
-		})
+		var responseEmbeddings googai.EmbedResponse
+		req.Documents = promptRespDocs
+		err = client.Embed(ctx, req, &responseEmbeddings)
 		if err != nil {
 			return fmt.Errorf("error embedding prompt+responses: %w", err)
 		}
 
 		// Store embeddings in examples
 		for j := 0; j < end-i; j++ {
-			te.Examples[i+j].EmPrompt = promptEmbeddings[j]
-			te.Examples[i+j].EmPromptResp = promptRespEmbeddings[j]
+			te.Examples[i+j].EmPrompt = promptEmbeddings.Embeddings[j]
+			te.Examples[i+j].EmPromptResp = responseEmbeddings.Embeddings[j]
 		}
 	}
 	return nil

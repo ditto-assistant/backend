@@ -9,6 +9,10 @@ import (
 	"github.com/ditto-assistant/backend/types/rq"
 )
 
+func (s *Service) Routes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/v2/get-memories", s.GetMemoriesV2)
+}
+
 type Service struct {
 	cl *core.Client
 }
@@ -19,11 +23,7 @@ func NewService(cl *core.Client) *Service {
 	}
 }
 
-func (s *Service) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/v2/get-memories", s.GetMemories)
-}
-
-func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
+func (s *Service) GetMemoriesV2(w http.ResponseWriter, r *http.Request) {
 	slog := slog.With("handler", "GetMemoriesV2")
 	tok, err := s.cl.Auth.VerifyToken(r)
 	if err != nil {
@@ -45,7 +45,7 @@ func (s *Service) GetMemories(w http.ResponseWriter, r *http.Request) {
 	rsp, err := s.cl.Memories.GetMemoriesV2(r.Context(), &req)
 	if err != nil {
 		slog.Error("Failed to get memories", "error", err)
-		http.Error(w, "Failed to get memories", http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	switch r.Header.Get("Accept") {

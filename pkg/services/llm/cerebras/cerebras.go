@@ -5,9 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"sync"
 
 	"github.com/ditto-assistant/backend/cfg/secr"
@@ -85,14 +85,12 @@ type StreamResponse struct {
 
 func (s *Service) Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) error {
 	if prompt.ImageURL != "" {
-		return fmt.Errorf("image input not supported for Cerebras models")
+		return errors.New("image input not supported for Cerebras models")
 	}
-
 	key, err := s.setupKey(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to setup api key: %w", err)
 	}
-
 	messages := make([]Message, 0, 2)
 	if prompt.SystemPrompt != "" {
 		messages = append(messages, Message{
@@ -100,12 +98,10 @@ func (s *Service) Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.Strea
 			Content: prompt.SystemPrompt,
 		})
 	}
-
 	messages = append(messages, Message{
 		Role:    "user",
 		Content: prompt.UserPrompt,
 	})
-
 	req := Request{
 		Model:       string(prompt.Model),
 		Messages:    messages,
@@ -114,50 +110,41 @@ func (s *Service) Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.Strea
 		Temperature: 0.2,
 		TopP:        1.0,
 	}
-
 	var buf bytes.Buffer
 	err = json.NewEncoder(&buf).Encode(req)
 	if err != nil {
 		return fmt.Errorf("error encoding request: %w", err)
 	}
-
-	// Create HTTP request
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", baseURL, &buf)
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+key)
-
 	resp, err := llm.HttpClient.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("error sending request: %w", err)
 	}
-
 	tokenChan := make(chan llm.Token)
 	rsp.Text = tokenChan
-
 	go func() {
 		defer resp.Body.Close()
 		defer close(tokenChan)
-
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data: ") {
+			line := scanner.Bytes()
+			if !bytes.HasPrefix(line, llm.PrefixData) {
 				continue
 			}
-			data := strings.TrimPrefix(line, "data: ")
-			if data == "[DONE]" {
+			data := bytes.TrimPrefix(line, llm.PrefixData)
+			if bytes.Equal(data, llm.TokenDone) {
 				break
 			}
-
 			var streamResp StreamResponse
-			if err := json.Unmarshal([]byte(data), &streamResp); err != nil {
+			if err := json.Unmarshal(data, &streamResp); err != nil {
 				tokenChan <- llm.Token{Err: fmt.Errorf("error parsing stream response: %w", err)}
 				return
 			}
-
 			for _, choice := range streamResp.Choices {
 				if choice.Delta.Content != "" {
 					tokenChan <- llm.Token{Ok: choice.Delta.Content}
@@ -168,11 +155,9 @@ func (s *Service) Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.Strea
 				}
 			}
 		}
-
 		if err := scanner.Err(); err != nil {
 			tokenChan <- llm.Token{Err: fmt.Errorf("error reading stream: %w", err)}
 		}
 	}()
-
 	return nil
 }

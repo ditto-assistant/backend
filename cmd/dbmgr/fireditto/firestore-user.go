@@ -2,50 +2,38 @@ package fireditto
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
+	"cloud.google.com/go/firestore"
 	firebase "firebase.google.com/go/v4"
+	"github.com/ditto-assistant/backend/pkg/services/llm"
+	"github.com/ditto-assistant/backend/pkg/services/llm/googai"
+	"github.com/ditto-assistant/backend/types/rp"
 )
 
-func (f *Command) PrintUser(ctx context.Context) error {
-	email, userID := f.Email, f.UID
-	app, err := firebase.NewApp(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("error creating firebase app: %w", err)
+func (f *Command) printUser(ctx context.Context) error {
+	if err := f.initFirebase(ctx); err != nil {
+		return err
 	}
-	// If email is provided, get the user ID first
-	if email != "" {
-		auth, err := app.Auth(ctx)
-		if err != nil {
-			return fmt.Errorf("error getting auth client: %w", err)
-		}
-		user, err := auth.GetUserByEmail(ctx, email)
-		if err != nil {
-			return fmt.Errorf("error getting user by email: %w", err)
-		}
-		userID = user.UID
-		slog.Info("User ID", "userID", userID)
+	if err := f.getUserByEmail(ctx); err != nil {
+		return err
 	}
-	fs, err := app.Firestore(ctx)
-	if err != nil {
-		return fmt.Errorf("error getting firestore client: %w", err)
-	}
-	convDocs, err := fs.
+	convDocs, err := f.fs.
 		Collection("memory").
-		Doc(userID).
+		Doc(f.UID).
 		Collection("conversations").
 		OrderBy("timestamp", f.Order()).
-		Limit(f.Limit).
-		Offset(f.Offset).
+		Limit(f.User.Limit).
+		Offset(f.User.Offset).
 		Documents(ctx).
 		GetAll()
 	if err != nil {
 		return fmt.Errorf("error getting conversations from Firestore: %w", err)
 	}
-	slog.Info("User conversations", "userID", userID, "count", len(convDocs))
+	slog.Info("User conversations", "userID", f.UID, "count", len(convDocs))
 	for _, doc := range convDocs {
 		var conv struct {
 			Prompt    string    `firestore:"prompt"`
@@ -56,8 +44,16 @@ func (f *Command) PrintUser(ctx context.Context) error {
 			slog.Error("Error unmarshaling conversation", "error", err, "docID", doc.Ref.ID)
 			continue
 		}
-		promptLinks := parseImageLinks(conv.Prompt)
-		respLinks := parseImageLinks(conv.Response)
+		var promptLinks []string
+		rp.TrimStuff(&conv.Prompt, "![image](", ")", func(s *string) error {
+			promptLinks = append(promptLinks, *s)
+			return nil
+		})
+		var respLinks []string
+		rp.TrimStuff(&conv.Response, "![DittoImage](", ")", func(s *string) error {
+			respLinks = append(respLinks, *s)
+			return nil
+		})
 		if len(conv.Prompt) > 100 {
 			conv.Prompt = conv.Prompt[:100] + "..."
 		}
@@ -77,42 +73,145 @@ func (f *Command) PrintUser(ctx context.Context) error {
 	return nil
 }
 
-func parseImageLinks(text string) []string {
-	const prefixImageAttachment = "![image]("
-	const prefixDittoImageAttachment = "![DittoImage]("
-	const suffixImageAttachment = ")"
-	var links []string
-	// Handle ![image]() links
-	remaining := text
-	for {
-		imgIdx := strings.Index(remaining, prefixImageAttachment)
-		if imgIdx == -1 {
-			break
-		}
-		start := imgIdx + len(prefixImageAttachment)
-		afterPrefix := remaining[start:]
-		closeIdx := strings.Index(afterPrefix, suffixImageAttachment)
-		if closeIdx == -1 {
-			break
-		}
-		links = append(links, afterPrefix[:closeIdx])
-		remaining = afterPrefix[closeIdx:]
+func (f *Command) initFirebase(ctx context.Context) error {
+	app, err := firebase.NewApp(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("error creating firebase app: %w", err)
 	}
-	// Handle ![DittoImage]() links
-	remaining = text
-	for {
-		imgIdx := strings.Index(remaining, prefixDittoImageAttachment)
-		if imgIdx == -1 {
-			break
-		}
-		start := imgIdx + len(prefixDittoImageAttachment)
-		afterPrefix := remaining[start:]
-		closeIdx := strings.Index(afterPrefix, suffixImageAttachment)
-		if closeIdx == -1 {
-			break
-		}
-		links = append(links, afterPrefix[:closeIdx])
-		remaining = afterPrefix[closeIdx:]
+	fs, err := app.Firestore(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting firestore client: %w", err)
 	}
-	return links
+	f.fs = fs
+	auth, err := app.Auth(ctx)
+	if err != nil {
+		return fmt.Errorf("error getting auth client: %w", err)
+	}
+	f.auth = auth
+	return nil
+}
+
+func (f *Command) getUserByEmail(ctx context.Context) error {
+	if f.Email == "" || f.UID != "" {
+		return nil
+	}
+	user, err := f.auth.GetUserByEmail(ctx, f.Email)
+	if err != nil {
+		return fmt.Errorf("error getting user by email: %w", err)
+	}
+	f.UID = user.UID
+	slog.Info("User ID", "userID", f.UID)
+	return nil
+}
+
+func (f *Command) embedMem(ctx context.Context) error {
+	if err := f.initFirebase(ctx); err != nil {
+		return err
+	}
+	if err := f.getUserByEmail(ctx); err != nil {
+		return err
+	}
+	if f.UID == "" && !f.Mem.AllUsers {
+		return errors.New("user ID is empty")
+	}
+	slog.Info("embed command", "command", f.Mem.Embed.String())
+	model := fmt.Sprintf("text-embedding-00%d", f.Mem.Embed.ModelVersion)
+	googaiClient, err := googai.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("error initializing Google AI client: %w", err)
+	}
+	colRef := f.fs.Collection("memory").Doc(f.UID).Collection("conversations")
+	var query firestore.Query
+	if !f.Mem.Embed.Start.Time().IsZero() {
+		query = colRef.Where("timestamp", ">=", f.Mem.Embed.Start.Time())
+	} else {
+		query = colRef.Query
+	}
+	docs, err := query.Documents(ctx).GetAll()
+	if err != nil {
+		return fmt.Errorf("error getting memory docs: %w", err)
+	}
+	slog.Info("Found documents to update", "count", len(docs))
+	batchSize := 50
+	bulkWriter := f.fs.BulkWriter(ctx)
+	defer func() {
+		bulkWriter.End()
+		slog.Info("bulk writer ended")
+	}()
+	for i := 0; i < len(docs); i += batchSize {
+		end := i + batchSize
+		if end > len(docs) {
+			end = len(docs)
+		}
+		batch := docs[i:end]
+		contents := make([]string, len(batch))
+		for j, doc := range batch {
+			data, err := doc.DataAt(f.Mem.Embed.ContentField)
+			if err != nil {
+				return fmt.Errorf("error getting data from document: %s: %w", doc.Ref.ID, err)
+			}
+			str, ok := data.(string)
+			if !ok {
+				return fmt.Errorf("data: %T is not a string for document: %s", data, doc.Ref.ID)
+			}
+			switch f.Mem.Embed.ContentField {
+			case "prompt":
+				rp.TrimStuff(&str, "![image](", ")", nil)
+			case "response":
+				rp.TrimStuff(&str, "![DittoImage](", ")", nil)
+				rp.FormatToolsResponse(&str)
+			}
+			contents[j] = str
+		}
+		var embedResp googai.EmbedResponse
+		err = googaiClient.Embed(ctx, &googai.EmbedRequest{
+			Documents: contents,
+			Model:     llm.ServiceName(model),
+		}, &embedResp)
+		if err != nil {
+			return fmt.Errorf("error embedding batch starting at %d: %w", i, err)
+		}
+		for j, doc := range batch {
+			_, err := bulkWriter.Update(doc.Ref, []firestore.Update{
+				{Path: f.Mem.Embed.EmbedField, Value: firestore.Vector32(embedResp.Embeddings[j])},
+			})
+			if err != nil {
+				return fmt.Errorf("error updating document %s: %w", doc.Ref.ID, err)
+			}
+		}
+		slog.Info("Processed batch", "start", i, "end", end, "total", len(docs))
+	}
+	return nil
+}
+
+func (f *Command) deleteColumn(ctx context.Context) error {
+	if err := f.initFirebase(ctx); err != nil {
+		return err
+	}
+	if err := f.getUserByEmail(ctx); err != nil {
+		return err
+	}
+	if f.UID == "" && !f.Mem.AllUsers {
+		return errors.New("user ID is empty")
+	}
+	slog.Info("Starting column deletion", "column", f.Mem.DeleteColumn, "userID", f.UID)
+	bulkWriter := f.fs.BulkWriter(ctx)
+	defer func() {
+		bulkWriter.End()
+		slog.Info("Successfully deleted column from all documents", "column", f.Mem.DeleteColumn)
+	}()
+	docs, err := f.fs.Collection("memory").Doc(f.UID).Collection("conversations").Documents(ctx).GetAll()
+	if err != nil {
+		return fmt.Errorf("error getting memory docs: %w", err)
+	}
+	slog.Info("Found documents to update", "count", len(docs))
+	for _, doc := range docs {
+		_, err := bulkWriter.Update(doc.Ref, []firestore.Update{
+			{Path: f.Mem.DeleteColumn, Value: firestore.Delete},
+		})
+		if err != nil {
+			return fmt.Errorf("error updating document %s: %w", doc.Ref.ID, err)
+		}
+	}
+	return nil
 }
