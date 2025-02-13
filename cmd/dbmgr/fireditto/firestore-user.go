@@ -9,6 +9,8 @@ import (
 
 	"cloud.google.com/go/firestore"
 	firebase "firebase.google.com/go/v4"
+	"github.com/ditto-assistant/backend/pkg/services/llm"
+	"github.com/ditto-assistant/backend/pkg/services/llm/googai"
 	"github.com/ditto-assistant/backend/types/rp"
 )
 
@@ -112,7 +114,66 @@ func (f *Command) embedMem(ctx context.Context) error {
 	if f.UID == "" && !f.Mem.AllUsers {
 		return errors.New("user ID is empty")
 	}
-	fmt.Printf("embed command: %+v\nzero time: %v\n", f.Mem.Embed, f.Mem.Embed.Start.Time().IsZero())
+	slog.Info("embed command", "command", f.Mem.Embed.String())
+	model := fmt.Sprintf("text-embedding-00%d", f.Mem.Embed.ModelVersion)
+	googaiClient, err := googai.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("error initializing Google AI client: %w", err)
+	}
+	colRef := f.fs.Collection("memory").Doc(f.UID).Collection("conversations")
+	var query firestore.Query
+	if !f.Mem.Embed.Start.Time().IsZero() {
+		query = colRef.Where("timestamp", ">=", f.Mem.Embed.Start.Time())
+	} else {
+		query = colRef.Query
+	}
+	docs, err := query.Documents(ctx).GetAll()
+	if err != nil {
+		return fmt.Errorf("error getting memory docs: %w", err)
+	}
+	slog.Info("Found documents to update", "count", len(docs))
+	batchSize := 50
+	bulkWriter := f.fs.BulkWriter(ctx)
+	defer func() {
+		bulkWriter.End()
+		slog.Info("bulk writer ended")
+	}()
+	for i := 0; i < len(docs); i += batchSize {
+		end := i + batchSize
+		if end > len(docs) {
+			end = len(docs)
+		}
+		batch := docs[i:end]
+		contents := make([]string, len(batch))
+		for j, doc := range batch {
+			data, err := doc.DataAt(f.Mem.Embed.ContentField)
+			if err != nil {
+				return fmt.Errorf("error getting data from document: %s: %w", doc.Ref.ID, err)
+			}
+			str, ok := data.(string)
+			if !ok {
+				return fmt.Errorf("data: %T is not a string for document: %s", data, doc.Ref.ID)
+			}
+			contents[j] = str
+		}
+		var embedResp googai.EmbedResponse
+		err = googaiClient.Embed(ctx, &googai.EmbedRequest{
+			Documents: contents,
+			Model:     llm.ServiceName(model),
+		}, &embedResp)
+		if err != nil {
+			return fmt.Errorf("error embedding batch starting at %d: %w", i, err)
+		}
+		for j, doc := range batch {
+			_, err := bulkWriter.Update(doc.Ref, []firestore.Update{
+				{Path: f.Mem.Embed.EmbedField, Value: firestore.Vector32(embedResp.Embeddings[j])},
+			})
+			if err != nil {
+				return fmt.Errorf("error updating document %s: %w", doc.Ref.ID, err)
+			}
+		}
+		slog.Info("Processed batch", "start", i, "end", end, "total", len(docs))
+	}
 	return nil
 }
 

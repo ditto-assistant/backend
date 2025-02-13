@@ -79,6 +79,17 @@ type CommandEmbed struct {
 	Start        timeVar
 }
 
+func (e *CommandEmbed) String() string {
+	if e.Start.Time().IsZero() {
+		return fmt.Sprintf(
+			"content field: %s, embed field: %s, model version: %d",
+			e.ContentField, e.EmbedField, e.ModelVersion)
+	}
+	return fmt.Sprintf(
+		"content field: %s, embed field: %s, model version: %d, start: %s",
+		e.ContentField, e.EmbedField, e.ModelVersion, e.Start.Time())
+}
+
 func (e *CommandEmbed) Validate() error {
 	if e.ContentField == "" {
 		return errors.New("content field must be provided")
@@ -131,7 +142,7 @@ func (f *Command) Parse(args []string) error {
 		switch f.Operation {
 		case OpEmbed:
 			firestoreFlags.StringVar(&f.Mem.Embed.ContentField, "content-field", "prompt", "content field")
-			firestoreFlags.StringVar(&f.Mem.Embed.EmbedField, "embed-field", "embedding_prompt", "embed field")
+			firestoreFlags.StringVar(&f.Mem.Embed.EmbedField, "embed-field", "embedding_prompt_5", "embed field")
 			firestoreFlags.IntVar(&f.Mem.Embed.ModelVersion, "model-version", 5, "model version")
 			firestoreFlags.Var(&f.Mem.Embed.Start, "start", "start time")
 		case OpDeleteColumn:
