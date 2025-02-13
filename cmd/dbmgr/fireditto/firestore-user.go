@@ -154,6 +154,13 @@ func (f *Command) embedMem(ctx context.Context) error {
 			if !ok {
 				return fmt.Errorf("data: %T is not a string for document: %s", data, doc.Ref.ID)
 			}
+			switch f.Mem.Embed.ContentField {
+			case "prompt":
+				rp.TrimStuff(&str, "![image](", ")", nil)
+			case "response":
+				rp.TrimStuff(&str, "![DittoImage](", ")", nil)
+				rp.FormatToolsResponse(&str)
+			}
 			contents[j] = str
 		}
 		var embedResp googai.EmbedResponse

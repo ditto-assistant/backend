@@ -63,37 +63,41 @@ type MemoriesV2 struct {
 	ShortTerm []Memory `json:"shortTerm"`
 }
 
-func (mem *Memory) FormatResponse() {
+func FormatToolsResponse(response *string) {
 	switch {
-	case strings.Contains(mem.Response, "Script Generated and Downloaded.**"):
-		parts := strings.Split(mem.Response, "- Task:")
+	case strings.Contains(*response, "Script Generated and Downloaded.**"):
+		parts := strings.Split(*response, "- Task:")
 		if len(parts) > 1 {
 			if strings.Contains(parts[0], "HTML") {
-				mem.Response = "<HTML_SCRIPT>" + parts[1]
+				*response = "<HTML_SCRIPT>" + parts[1]
 			} else if strings.Contains(parts[0], "OpenSCAD") {
-				mem.Response = "<OPENSCAD>" + parts[1]
+				*response = "<OPENSCAD>" + parts[1]
 			}
 		}
-	case strings.Contains(mem.Response, "Image Task:"):
-		parts := strings.Split(mem.Response, "Image Task:")
+	case strings.Contains(*response, "Image Task:"):
+		parts := strings.Split(*response, "Image Task:")
 		if len(parts) > 1 {
-			mem.Response = "<IMAGE_GENERATION>" + parts[1]
+			*response = "<IMAGE_GENERATION>" + parts[1]
 		}
-	case strings.Contains(mem.Response, "Google Search Query:"):
-		parts := strings.Split(mem.Response, "Google Search Query:")
+	case strings.Contains(*response, "Google Search Query:"):
+		parts := strings.Split(*response, "Google Search Query:")
 		if len(parts) > 1 {
-			mem.Response = "<GOOGLE_SEARCH>" + parts[1]
+			*response = "<GOOGLE_SEARCH>" + parts[1]
 		}
-	case strings.Contains(mem.Response, "Home Assistant Task:"):
-		parts := strings.Split(mem.Response, "Home Assistant Task:")
+	case strings.Contains(*response, "Home Assistant Task:"):
+		parts := strings.Split(*response, "Home Assistant Task:")
 		if len(parts) > 1 {
 			cleaned := strings.TrimSpace(strings.ReplaceAll(
 				strings.ReplaceAll(parts[1], "Task completed successfully.", ""),
 				"Task failed.", "",
 			))
-			mem.Response = "<GOOGLE_HOME> " + cleaned
+			*response = "<GOOGLE_HOME> " + cleaned
 		}
 	}
+}
+
+func (mem *Memory) FormatResponse() {
+	FormatToolsResponse(&mem.Response)
 }
 
 func (mem *Memory) StripImages() {
