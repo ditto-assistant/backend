@@ -3,7 +3,7 @@ module github.com/ditto-assistant/backend
 go 1.23.3
 
 require (
-	cloud.google.com/go/aiplatform v1.71.0
+	cloud.google.com/go/aiplatform v1.73.0
 	cloud.google.com/go/firestore v1.18.0
 	firebase.google.com/go/v4 v4.15.1
 	github.com/aws/aws-sdk-go v1.55.6
@@ -14,8 +14,8 @@ require (
 	github.com/tursodatabase/go-libsql v0.0.0-20241221181756-6121e81fbf92
 	golang.org/x/oauth2 v0.25.0
 	golang.org/x/sync v0.10.0
-	google.golang.org/api v0.219.0
-	google.golang.org/protobuf v1.36.4
+	google.golang.org/api v0.220.0
+	google.golang.org/protobuf v1.36.5
 )
 
 require (
@@ -68,8 +68,8 @@ require (
 	golang.org/x/time v0.9.0 // indirect
 	google.golang.org/appengine/v2 v2.0.6 // indirect
 	google.golang.org/genproto v0.0.0-20250127172529-29210b9bc287 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20250127172529-29210b9bc287 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20250127172529-29210b9bc287 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20250207221924-e9438ea467c6 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20250207221924-e9438ea467c6 // indirect
 	google.golang.org/grpc v1.70.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
