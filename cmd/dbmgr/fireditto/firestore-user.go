@@ -90,14 +90,15 @@ func (f *Command) initFirebase(ctx context.Context) error {
 }
 
 func (f *Command) getUserByEmail(ctx context.Context) error {
-	if f.Email != "" {
-		user, err := f.auth.GetUserByEmail(ctx, f.Email)
-		if err != nil {
-			return fmt.Errorf("error getting user by email: %w", err)
-		}
-		f.UID = user.UID
-		slog.Info("User ID", "userID", f.UID)
+	if f.Email == "" || f.UID != "" {
+		return nil
 	}
+	user, err := f.auth.GetUserByEmail(ctx, f.Email)
+	if err != nil {
+		return fmt.Errorf("error getting user by email: %w", err)
+	}
+	f.UID = user.UID
+	slog.Info("User ID", "userID", f.UID)
 	return nil
 }
 
