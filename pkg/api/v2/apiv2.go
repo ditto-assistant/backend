@@ -9,6 +9,10 @@ import (
 	"github.com/ditto-assistant/backend/types/rq"
 )
 
+func (s *Service) Routes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/v2/get-memories", s.GetMemoriesV2)
+}
+
 type Service struct {
 	cl *core.Client
 }
@@ -17,10 +21,6 @@ func NewService(cl *core.Client) *Service {
 	return &Service{
 		cl: cl,
 	}
-}
-
-func (s *Service) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /api/v2/get-memories", s.GetMemoriesV2)
 }
 
 func (s *Service) GetMemoriesV2(w http.ResponseWriter, r *http.Request) {

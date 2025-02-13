@@ -131,7 +131,7 @@ func (f *Command) Parse(args []string) error {
 		switch f.Operation {
 		case OpEmbed:
 			firestoreFlags.StringVar(&f.Mem.Embed.ContentField, "content-field", "prompt", "content field")
-			firestoreFlags.StringVar(&f.Mem.Embed.EmbedField, "embed-field", "embedding_vector", "embed field")
+			firestoreFlags.StringVar(&f.Mem.Embed.EmbedField, "embed-field", "embedding_prompt", "embed field")
 			firestoreFlags.IntVar(&f.Mem.Embed.ModelVersion, "model-version", 5, "model version")
 			firestoreFlags.Var(&f.Mem.Embed.Start, "start", "start time")
 		case OpDeleteColumn:

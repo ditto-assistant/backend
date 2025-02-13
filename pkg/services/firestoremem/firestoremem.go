@@ -10,10 +10,14 @@ import (
 
 	"cloud.google.com/go/firestore"
 	"github.com/ditto-assistant/backend/pkg/services/filestorage"
-	"github.com/ditto-assistant/backend/pkg/services/llm"
 	"github.com/ditto-assistant/backend/types/rp"
 	"github.com/ditto-assistant/backend/types/rq"
 	"golang.org/x/sync/errgroup"
+)
+
+const (
+	ColumnEmbeddingPrompt5   = "embedding_prompt_5"
+	ColumnEmbeddingResponse5 = "embedding_response_5"
 )
 
 type Client struct {
@@ -26,11 +30,11 @@ func NewClient(firestore *firestore.Client, fsClient *filestorage.Client) *Clien
 }
 
 type CreatePromptRequest struct {
-	DeviceID        string             `firestore:"device_id"`
-	EmbeddingVector firestore.Vector32 `firestore:"embedding_vector"`
-	EmbeddingModel  llm.ServiceName    `firestore:"embedding_model"`
-	Prompt          string             `firestore:"prompt"`
-	Timestamp       time.Time          `firestore:"timestamp,serverTimestamp"`
+	DeviceID string `firestore:"device_id"`
+	// llm.ModelTextEmbedding005
+	EmbeddingPrompt5 firestore.Vector32 `firestore:"embedding_prompt_5"`
+	Prompt           string             `firestore:"prompt"`
+	Timestamp        time.Time          `firestore:"timestamp,serverTimestamp"`
 }
 
 func (cl *Client) conversationsRef(userID string) *firestore.CollectionRef {
@@ -48,12 +52,15 @@ func (cl *Client) CreatePrompt(ctx context.Context, userID string, req *CreatePr
 
 type SaveResponseRequest struct {
 	UserID, PairID, Response string
+	// llm.ModelTextEmbedding005
+	EmbeddingResponse5 firestore.Vector32
 }
 
 func (cl *Client) SaveResponse(ctx context.Context, req *SaveResponseRequest) error {
 	pair := cl.conversationsRef(req.UserID).Doc(req.PairID)
 	_, err := pair.Update(ctx, []firestore.Update{
 		{Path: "response", Value: req.Response},
+		{Path: ColumnEmbeddingResponse5, Value: req.EmbeddingResponse5},
 	})
 	if err != nil {
 		return err
@@ -61,19 +68,19 @@ func (cl *Client) SaveResponse(ctx context.Context, req *SaveResponseRequest) er
 	return nil
 }
 
-func (cl *Client) GetEmbedding(ctx context.Context, userID, pairID string) (firestore.Vector32, error) {
+func (cl *Client) GetEmbeddingPrompt(ctx context.Context, userID, pairID string) (firestore.Vector32, error) {
 	pair := cl.conversationsRef(userID).Doc(pairID)
 	doc, err := pair.Get(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var embedding struct {
-		EmbeddingVector firestore.Vector32 `firestore:"embedding_vector"`
+		EmbeddingPrompt5 firestore.Vector32 `firestore:"embedding_prompt_5"`
 	}
 	if err := doc.DataTo(&embedding); err != nil {
 		return nil, err
 	}
-	return embedding.EmbeddingVector, nil
+	return embedding.EmbeddingPrompt5, nil
 }
 
 func (cl *Client) GetMemoriesV2(ctx context.Context, req *rq.GetMemoriesV2) (rp.MemoriesV2, error) {
@@ -159,7 +166,7 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 		return nil, fmt.Errorf("node thresholds: %v and node counts: %v must be the same length", req.LongTerm.NodeThresholds, req.LongTerm.NodeCounts)
 	}
 	if req.LongTerm.PairID != "" {
-		embedding, err := cl.GetEmbedding(ctx, req.UserID, req.LongTerm.PairID)
+		embedding, err := cl.GetEmbeddingPrompt(ctx, req.UserID, req.LongTerm.PairID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get embedding by pairID: %w", err)
 		}

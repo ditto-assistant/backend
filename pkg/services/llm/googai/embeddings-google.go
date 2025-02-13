@@ -30,7 +30,7 @@ func NewClient(ctx context.Context) (*Client, error) {
 	apiEndpoint := fmt.Sprintf("%s-aiplatform.googleapis.com:443", location)
 	client, err := aiplatform.NewPredictionClient(ctx, option.WithEndpoint(apiEndpoint))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create prediction client: %w", err)
+		return nil, fmt.Errorf("aiplatform.NewPredictionClient: %w", err)
 	}
 	return &Client{
 		client:   client,

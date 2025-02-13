@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/firestore"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/ditto-assistant/backend/cfg/envs"
@@ -18,6 +19,8 @@ import (
 	"github.com/ditto-assistant/backend/pkg/services/db"
 	"github.com/ditto-assistant/backend/pkg/services/db/users"
 	"github.com/ditto-assistant/backend/pkg/services/firestoremem"
+	"github.com/ditto-assistant/backend/pkg/services/llm"
+	"github.com/ditto-assistant/backend/pkg/services/llm/openai"
 	"github.com/ditto-assistant/backend/pkg/services/llm/openai/dalle"
 	"github.com/ditto-assistant/backend/pkg/services/search"
 	"github.com/ditto-assistant/backend/types/rp"
@@ -26,20 +29,32 @@ import (
 	"github.com/omniaura/mapcache"
 )
 
+func (s *Service) Routes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/balance", s.Balance)
+	mux.HandleFunc("POST /v1/google-search", s.WebSearch)
+	mux.HandleFunc("POST /v1/generate-image", s.GenerateImage)
+	mux.HandleFunc("POST /v1/presign-url", s.PresignURL)
+	mux.HandleFunc("POST /v1/create-upload-url", s.CreateUploadURL)
+	mux.HandleFunc("POST /v1/get-memories", s.GetMemories)
+	mux.HandleFunc("POST /v1/feedback", s.Feedback)
+	mux.HandleFunc("POST /v1/embed", s.Embed)
+	mux.HandleFunc("POST /v1/search-examples", s.SearchExamples)
+	mux.HandleFunc("POST /v1/create-prompt", s.CreatePrompt)
+	mux.HandleFunc("POST /v1/save-response", s.SaveResponse)
+}
+
 const presignTTL = 24 * time.Hour
 
 type Service struct {
 	sd           ty.ShutdownContext
 	sc           *core.Client
 	searchClient *search.Client
-	s3           *s3.S3
 	urlCache     *mapcache.MapCache[string, string]
 	dalle        *dalle.Client
 }
 
 type ServiceClients struct {
 	SearchClient *search.Client
-	S3           *s3.S3
 	Dalle        *dalle.Client
 }
 
@@ -55,7 +70,6 @@ func NewService(sd ty.ShutdownContext, sc *core.Client, setup ServiceClients) *S
 		sd:           sd,
 		sc:           sc,
 		searchClient: setup.SearchClient,
-		s3:           setup.S3,
 		urlCache:     urlCache,
 		dalle:        setup.Dalle,
 	}
@@ -79,7 +93,6 @@ func (s *Service) Balance(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-
 	rsp, err := users.GetBalance(r, db.D, bod)
 	if err != nil {
 		slog.Error("failed to handle balance request", "uid", bod.UserID, "error", err)
@@ -206,7 +219,7 @@ func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
 		}
 		filename := strings.TrimPrefix(urlParts[0], envs.DALL_E_PREFIX)
 		key := fmt.Sprintf("%s/generated-images/%s", bod.UserID, filename)
-		put, err := s.s3.PutObject(&s3.PutObjectInput{
+		put, err := s.sc.FileStorage.S3.PutObject(&s3.PutObjectInput{
 			Bucket: bucketDittoContent,
 			Key:    aws.String(key),
 			Body:   bytes.NewReader(imgData),
@@ -268,7 +281,7 @@ func (s *Service) PresignURL(w http.ResponseWriter, r *http.Request) {
 		filename = strings.TrimPrefix(filename, bod.UserID+"/")
 		filename = strings.TrimPrefix(filename, bod.Folder+"/")
 		key := fmt.Sprintf("%s/%s/%s", bod.UserID, bod.Folder, filename)
-		objReq, _ := s.s3.GetObjectRequest(&s3.GetObjectInput{
+		objReq, _ := s.sc.FileStorage.S3.GetObjectRequest(&s3.GetObjectInput{
 			Bucket: bucketDittoContent,
 			Key:    aws.String(key),
 		})
@@ -305,7 +318,7 @@ func (s *Service) CreateUploadURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := fmt.Sprintf("%s/uploads/%d", bod.UserID, time.Now().UnixNano())
-	req, _ := s.s3.PutObjectRequest(&s3.PutObjectInput{
+	req, _ := s.sc.FileStorage.S3.PutObjectRequest(&s3.PutObjectInput{
 		Bucket: bucketDittoContent,
 		Key:    aws.String(key),
 	})
@@ -437,6 +450,161 @@ func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 }
 
+// - MARK: embed
+
+func (s *Service) Embed(w http.ResponseWriter, r *http.Request) {
+	tok, err := s.sc.Auth.VerifyToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var bod rq.EmbedV1
+	if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = tok.Check(bod.UserID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	user := users.User{UID: bod.UserID}
+	ctx := r.Context()
+	if err := user.GetByUID(ctx, db.D); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if bod.Model == "" {
+		bod.Model = llm.ModelTextEmbedding004
+	}
+	slog := slog.With("action", "embed", "userID", bod.UserID, "model", bod.Model, "email", user.Email.String)
+	var embedding llm.Embedding
+	var tokens int64
+	if bod.Model == llm.ModelTextEmbedding3Small {
+		embedding, err = openai.GenerateEmbedding(ctx, bod.Text, bod.Model)
+		tokens = int64(llm.EstimateTokens(bod.Text))
+	} else {
+		embedding, tokens, err = s.sc.Embedder.EmbedSingle(ctx, bod.Text, bod.Model)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(embedding)
+	s.sd.Run(func(ctx context.Context) {
+		slog.Debug("receipt", "input_tokens", tokens)
+		receipt := db.Receipt{
+			UserID:      user.ID,
+			TotalTokens: tokens,
+			ServiceName: bod.Model,
+		}
+		if err := receipt.Insert(ctx); err != nil {
+			slog.Error("failed to insert receipt", "error", err)
+		}
+	})
+}
+
+// - MARK: search-examples
+
+func (s *Service) SearchExamples(w http.ResponseWriter, r *http.Request) {
+	tok, err := s.sc.Auth.VerifyToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var bod rq.SearchExamplesV1
+	if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = tok.Check(bod.UserID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+	}
+	if bod.K == 0 {
+		bod.K = 5
+	}
+	ctx := r.Context()
+	if len(bod.Embedding) == 0 && bod.PairID == "" {
+		http.Error(w, "embedding or pairID is required", http.StatusBadRequest)
+	}
+	if bod.PairID != "" {
+		embedding, err := s.sc.Memories.GetEmbeddingPrompt(ctx, bod.UserID, bod.PairID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		bod.Embedding = llm.Embedding(embedding)
+	}
+	examples, err := db.SearchExamples(ctx, bod.Embedding, db.WithK(bod.K))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// Format response
+	w.Write([]byte{'\n'})
+	for i, example := range examples {
+		fmt.Fprintf(w, "Example %d\n", i+1)
+		fmt.Fprintf(w, "User's Prompt: %s\nDitto:\n%s\n\n", example.Prompt, example.Response)
+	}
+}
+
+// - MARK: create-prompt
+
+func (s *Service) CreatePrompt(w http.ResponseWriter, r *http.Request) {
+	tok, err := s.sc.Auth.VerifyToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var bod rq.CreatePromptV1
+	if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	err = tok.Check(bod.UserID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	user := users.User{UID: bod.UserID}
+	ctx := r.Context()
+	if err := user.GetByUID(ctx, db.D); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	slog := slog.With("action", "embed", "userID", bod.UserID, "email", user.Email.String)
+	model := llm.ModelTextEmbedding005
+	embedding, tokens, err := s.sc.Embedder.EmbedSingle(ctx, bod.Prompt, model)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	id, err := s.sc.Memories.CreatePrompt(ctx, bod.UserID, &firestoremem.CreatePromptRequest{
+		DeviceID:         bod.DeviceID,
+		Prompt:           bod.Prompt,
+		EmbeddingPrompt5: firestore.Vector32(embedding),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(id))
+	s.sd.Run(func(ctx context.Context) {
+		slog.Debug("receipt", "input_tokens", tokens)
+		receipt := db.Receipt{
+			UserID:      user.ID,
+			TotalTokens: tokens,
+			ServiceName: model,
+		}
+		if err := receipt.Insert(ctx); err != nil {
+			slog.Error("failed to insert receipt", "error", err)
+		}
+	})
+}
+
 // - MARK: save-response
 
 func (s *Service) SaveResponse(w http.ResponseWriter, r *http.Request) {
@@ -457,11 +625,24 @@ func (s *Service) SaveResponse(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
+	user := users.User{UID: bod.UserID}
+	ctx := r.Context()
+	if err := user.GetByUID(ctx, db.D); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	slog = slog.With("userID", bod.UserID)
+	model := llm.ModelTextEmbedding005
+	embedding, tokens, err := s.sc.Embedder.EmbedSingle(ctx, bod.Response, model)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	err = s.sc.Memories.SaveResponse(r.Context(), &firestoremem.SaveResponseRequest{
-		UserID:   bod.UserID,
-		PairID:   bod.PairID,
-		Response: bod.Response,
+		UserID:             bod.UserID,
+		PairID:             bod.PairID,
+		Response:           bod.Response,
+		EmbeddingResponse5: firestore.Vector32(embedding),
 	})
 	if err != nil {
 		slog.Error("Failed to save response", "error", err)
@@ -469,4 +650,15 @@ func (s *Service) SaveResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
+	s.sd.Run(func(ctx context.Context) {
+		slog.Debug("receipt", "input_tokens", tokens)
+		receipt := db.Receipt{
+			UserID:      user.ID,
+			TotalTokens: tokens,
+			ServiceName: model,
+		}
+		if err := receipt.Insert(ctx); err != nil {
+			slog.Error("failed to insert receipt", "error", err)
+		}
+	})
 }

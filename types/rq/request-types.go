@@ -35,10 +35,9 @@ type EmbedV1 struct {
 }
 
 type CreatePromptV1 struct {
-	UserID   string          `json:"userID"`
-	DeviceID string          `json:"deviceID"`
-	Prompt   string          `json:"prompt"`
-	Model    llm.ServiceName `json:"model"`
+	UserID   string `json:"userID"`
+	DeviceID string `json:"deviceID"`
+	Prompt   string `json:"prompt"`
 }
 
 type GenerateImageV1 struct {
