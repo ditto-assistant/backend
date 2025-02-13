@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	firebase "firebase.google.com/go/v4"
+	"github.com/ditto-assistant/backend/types/rp"
 )
 
 func (f *Command) PrintUser(ctx context.Context) error {
@@ -56,8 +56,16 @@ func (f *Command) PrintUser(ctx context.Context) error {
 			slog.Error("Error unmarshaling conversation", "error", err, "docID", doc.Ref.ID)
 			continue
 		}
-		promptLinks := parseImageLinks(conv.Prompt)
-		respLinks := parseImageLinks(conv.Response)
+		var promptLinks []string
+		rp.TrimStuff(&conv.Prompt, "![image](", ")", func(s *string) error {
+			promptLinks = append(promptLinks, *s)
+			return nil
+		})
+		var respLinks []string
+		rp.TrimStuff(&conv.Response, "![DittoImage](", ")", func(s *string) error {
+			respLinks = append(respLinks, *s)
+			return nil
+		})
 		if len(conv.Prompt) > 100 {
 			conv.Prompt = conv.Prompt[:100] + "..."
 		}
@@ -77,42 +85,6 @@ func (f *Command) PrintUser(ctx context.Context) error {
 	return nil
 }
 
-func parseImageLinks(text string) []string {
-	const prefixImageAttachment = "![image]("
-	const prefixDittoImageAttachment = "![DittoImage]("
-	const suffixImageAttachment = ")"
-	var links []string
-	// Handle ![image]() links
-	remaining := text
-	for {
-		imgIdx := strings.Index(remaining, prefixImageAttachment)
-		if imgIdx == -1 {
-			break
-		}
-		start := imgIdx + len(prefixImageAttachment)
-		afterPrefix := remaining[start:]
-		closeIdx := strings.Index(afterPrefix, suffixImageAttachment)
-		if closeIdx == -1 {
-			break
-		}
-		links = append(links, afterPrefix[:closeIdx])
-		remaining = afterPrefix[closeIdx:]
-	}
-	// Handle ![DittoImage]() links
-	remaining = text
-	for {
-		imgIdx := strings.Index(remaining, prefixDittoImageAttachment)
-		if imgIdx == -1 {
-			break
-		}
-		start := imgIdx + len(prefixDittoImageAttachment)
-		afterPrefix := remaining[start:]
-		closeIdx := strings.Index(afterPrefix, suffixImageAttachment)
-		if closeIdx == -1 {
-			break
-		}
-		links = append(links, afterPrefix[:closeIdx])
-		remaining = afterPrefix[closeIdx:]
-	}
-	return links
+func (f *Command) EmbedConversations(ctx context.Context) error {
+	return nil
 }

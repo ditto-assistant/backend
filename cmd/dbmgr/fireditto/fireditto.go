@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,15 +19,16 @@ const (
 	ModeMem
 )
 
-func ParseMode(mode string) (Mode, error) {
+func (m *Mode) Parse(mode string) error {
 	switch strings.ToLower(mode) {
 	case "user":
-		return ModeUser, nil
+		*m = ModeUser
 	case "mem":
-		return ModeMem, nil
+		*m = ModeMem
 	default:
-		return 0, fmt.Errorf("unknown mode: %s", mode)
+		return fmt.Errorf("unknown mode: %s", mode)
 	}
+	return nil
 }
 
 //go:generate stringer -type=Op -trimprefix=Op
@@ -39,15 +39,16 @@ const (
 	OpEmbed
 )
 
-func ParseCrudOperation(operation string) (Op, error) {
+func (o *Op) Parse(operation string) error {
 	switch strings.ToLower(operation) {
 	case "get":
-		return OpGET, nil
+		*o = OpGET
 	case "embed":
-		return OpEmbed, nil
+		*o = OpEmbed
 	default:
-		return 0, fmt.Errorf("unknown operation: %s", operation)
+		return fmt.Errorf("unknown operation: %s", operation)
 	}
+	return nil
 }
 
 type Command struct {
@@ -67,7 +68,7 @@ type CommandEmbed struct {
 	ContentField string
 	EmbedField   string
 	ModelVersion int
-	Start        time.Time
+	Start        timeVar
 }
 
 func (f *Command) Order() firestore.Direction {
@@ -85,13 +86,10 @@ func (f *Command) Parse(args []string) error {
 	if len(args) < 2 {
 		return fmt.Errorf("no operation provided")
 	}
-	mode, err := ParseMode(args[0])
-	if err != nil {
+	if err := f.Mode.Parse(args[0]); err != nil {
 		return fmt.Errorf("invalid mode: %s", err)
 	}
-	f.Mode = mode
-	f.Operation, err = ParseCrudOperation(args[1])
-	if err != nil {
+	if err := f.Operation.Parse(args[1]); err != nil {
 		return fmt.Errorf("invalid operation: %s", err)
 	}
 	firestoreFlags := flag.NewFlagSet("firestore", flag.ExitOnError)
@@ -108,10 +106,10 @@ func (f *Command) Parse(args []string) error {
 			return fmt.Errorf("invalid user flags: %s", err)
 		}
 	case ModeMem:
-		firestoreFlags.StringVar(&f.Mem.Embed.ContentField, "content-field", "", "content field")
-		firestoreFlags.StringVar(&f.Mem.Embed.EmbedField, "embed-field", "", "embed field")
-		firestoreFlags.IntVar(&f.Mem.Embed.ModelVersion, "model-version", 1, "model version")
-		firestoreFlags.Var((*timeVar)(&f.Mem.Embed.Start), "start", "start time (optional)")
+		firestoreFlags.StringVar(&f.Mem.Embed.ContentField, "content-field", "prompt", "content field")
+		firestoreFlags.StringVar(&f.Mem.Embed.EmbedField, "embed-field", "embedding_vector", "embed field")
+		firestoreFlags.IntVar(&f.Mem.Embed.ModelVersion, "model-version", 5, "model version")
+		firestoreFlags.Var(&f.Mem.Embed.Start, "start", "start time")
 		firestoreFlags.Parse(args[2:])
 		if err := f.Validate(); err != nil {
 			return fmt.Errorf("invalid mem flags: %s", err)
@@ -153,38 +151,6 @@ func (f *Command) HandleUser(ctx context.Context) error {
 	default:
 		return fmt.Errorf("unknown operation: %s", f.Operation)
 	}
-}
-
-// multiFlag implements flag.Value interface for repeated string flags
-type multiFlag []string
-
-func (f *multiFlag) String() string {
-	return strings.Join(*f, ", ")
-}
-
-func (f *multiFlag) Set(value string) error {
-	*f = append(*f, value)
-	return nil
-}
-
-// intMultiFlag implements flag.Value interface for repeated int flags
-type intMultiFlag []int
-
-func (f *intMultiFlag) String() string {
-	var s []string
-	for _, i := range *f {
-		s = append(s, fmt.Sprint(i))
-	}
-	return strings.Join(s, ", ")
-}
-
-func (f *intMultiFlag) Set(value string) error {
-	i, err := strconv.Atoi(value)
-	if err != nil {
-		return err
-	}
-	*f = append(*f, i)
-	return nil
 }
 
 // timeVar implements flag.Value interface for a single time.Time value
