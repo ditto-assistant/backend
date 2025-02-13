@@ -2,11 +2,14 @@ package llm
 
 type ServiceName string
 
-// Text Embeddings
+// Google Embedding Models
 const (
-	// ModelTextEmbedding004 is Google's embedding model.
 	ModelTextEmbedding004 ServiceName = "text-embedding-004"
-	// ModelTextEmbedding3Small is OpenAI's embedding model.
+	ModelTextEmbedding005 ServiceName = "text-embedding-005"
+)
+
+// OpenAI Embedding Models
+const (
 	ModelTextEmbedding3Small ServiceName = "text-embedding-3-small"
 )
 

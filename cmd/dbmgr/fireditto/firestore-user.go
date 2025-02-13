@@ -38,8 +38,8 @@ func (f *Command) PrintUser(ctx context.Context) error {
 		Doc(userID).
 		Collection("conversations").
 		OrderBy("timestamp", f.Order()).
-		Limit(f.Limit).
-		Offset(f.Offset).
+		Limit(f.User.Limit).
+		Offset(f.User.Offset).
 		Documents(ctx).
 		GetAll()
 	if err != nil {

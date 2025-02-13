@@ -2,12 +2,15 @@ package firestoremem
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	"cloud.google.com/go/firestore"
 	"github.com/ditto-assistant/backend/pkg/services/filestorage"
+	"github.com/ditto-assistant/backend/pkg/services/llm"
 	"github.com/ditto-assistant/backend/types/rp"
 	"github.com/ditto-assistant/backend/types/rq"
 	"golang.org/x/sync/errgroup"
@@ -20,6 +23,57 @@ type Client struct {
 
 func NewClient(firestore *firestore.Client, fsClient *filestorage.Client) *Client {
 	return &Client{firestore: firestore, fsClient: fsClient}
+}
+
+type CreatePromptRequest struct {
+	DeviceID        string             `firestore:"device_id"`
+	EmbeddingVector firestore.Vector32 `firestore:"embedding_vector"`
+	EmbeddingModel  llm.ServiceName    `firestore:"embedding_model"`
+	Prompt          string             `firestore:"prompt"`
+	Timestamp       time.Time          `firestore:"timestamp,serverTimestamp"`
+}
+
+func (cl *Client) conversationsRef(userID string) *firestore.CollectionRef {
+	return cl.firestore.Collection("memory").Doc(userID).Collection("conversations")
+}
+
+func (cl *Client) CreatePrompt(ctx context.Context, userID string, req *CreatePromptRequest) (string, error) {
+	pair := cl.conversationsRef(userID).NewDoc()
+	_, err := pair.Create(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	return pair.ID, nil
+}
+
+type SaveResponseRequest struct {
+	UserID, PairID, Response string
+}
+
+func (cl *Client) SaveResponse(ctx context.Context, req *SaveResponseRequest) error {
+	pair := cl.conversationsRef(req.UserID).Doc(req.PairID)
+	_, err := pair.Update(ctx, []firestore.Update{
+		{Path: "response", Value: req.Response},
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (cl *Client) GetEmbedding(ctx context.Context, userID, pairID string) (firestore.Vector32, error) {
+	pair := cl.conversationsRef(userID).Doc(pairID)
+	doc, err := pair.Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var embedding struct {
+		EmbeddingVector firestore.Vector32 `firestore:"embedding_vector"`
+	}
+	if err := doc.DataTo(&embedding); err != nil {
+		return nil, err
+	}
+	return embedding.EmbeddingVector, nil
 }
 
 func (cl *Client) GetMemoriesV2(ctx context.Context, req *rq.GetMemoriesV2) (rp.MemoriesV2, error) {
@@ -51,7 +105,7 @@ func (cl *Client) getShort(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Mem
 	if req.ShortTerm == nil || req.ShortTerm.K == 0 {
 		return nil, nil
 	}
-	memoriesRef := cl.firestore.Collection("memory").Doc(req.UserID).Collection("conversations")
+	memoriesRef := cl.conversationsRef(req.UserID)
 	query := memoriesRef.OrderBy("timestamp", firestore.Desc).Limit(req.ShortTerm.K)
 	docs, err := query.Documents(ctx).GetAll()
 	if err != nil {
@@ -81,12 +135,35 @@ func (cl *Client) getShort(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Mem
 	return memories, nil
 }
 
+func defaultNodeThresholds(nc int) []float64 {
+	thresholds := make([]float64, nc)
+	for i := range thresholds {
+		if i == 0 {
+			thresholds[i] = 0.3
+		} else {
+			thresholds[i] = 0.1
+		}
+	}
+	return thresholds
+}
+
 func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memory, error) {
 	if req.LongTerm == nil {
 		return nil, nil
 	}
-	if len(req.LongTerm.NodeCounts) == 0 {
-		return nil, fmt.Errorf("no node counts provided")
+	if nc, nt := len(req.LongTerm.NodeCounts), len(req.LongTerm.NodeThresholds); nc == 0 {
+		return nil, errors.New("no node counts provided")
+	} else if nt == 0 {
+		req.LongTerm.NodeThresholds = defaultNodeThresholds(nc)
+	} else if nc != nt {
+		return nil, fmt.Errorf("node thresholds: %v and node counts: %v must be the same length", req.LongTerm.NodeThresholds, req.LongTerm.NodeCounts)
+	}
+	if req.LongTerm.PairID != "" {
+		embedding, err := cl.GetEmbedding(ctx, req.UserID, req.LongTerm.PairID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get embedding by pairID: %w", err)
+		}
+		req.LongTerm.Vector = embedding
 	}
 
 	// Keep track of seen memory IDs to avoid duplicates
@@ -94,14 +171,14 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 	var mutex sync.RWMutex
 
 	// First level search
-	memoriesRef := cl.firestore.Collection("memory").Doc(req.UserID).Collection("conversations")
+	memoriesRef := cl.conversationsRef(req.UserID)
 	vectorQuery := memoriesRef.FindNearest("embedding_vector",
 		req.LongTerm.Vector,
 		req.LongTerm.NodeCounts[0],
 		firestore.DistanceMeasureDotProduct,
 		&firestore.FindNearestOptions{
 			DistanceResultField: "vector_distance",
-			DistanceThreshold:   firestore.Ptr(0.3),
+			DistanceThreshold:   firestore.Ptr(req.LongTerm.NodeThresholds[0]),
 		})
 	querySnapshot, err := vectorQuery.Documents(ctx).GetAll()
 	if err != nil {
@@ -151,7 +228,7 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 			firestore.DistanceMeasureDotProduct,
 			&firestore.FindNearestOptions{
 				DistanceResultField: "vector_distance",
-				DistanceThreshold:   firestore.Ptr(0.1),
+				DistanceThreshold:   firestore.Ptr(req.LongTerm.NodeThresholds[depth]),
 			})
 
 		querySnapshot, err := vectorQuery.Documents(ctx).GetAll()

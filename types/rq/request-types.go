@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"cloud.google.com/go/firestore"
 	"github.com/ditto-assistant/backend/pkg/services/llm"
 )
 
@@ -33,6 +34,13 @@ type EmbedV1 struct {
 	Model  llm.ServiceName `json:"model"`
 }
 
+type CreatePromptV1 struct {
+	UserID   string          `json:"userID"`
+	DeviceID string          `json:"deviceID"`
+	Prompt   string          `json:"prompt"`
+	Model    llm.ServiceName `json:"model"`
+}
+
 type GenerateImageV1 struct {
 	UserID    string          `json:"userID"`
 	Prompt    string          `json:"prompt"`
@@ -52,6 +60,7 @@ type GenerateImageV1 struct {
 
 type SearchExamplesV1 struct {
 	UserID    string        `json:"userID"`
+	PairID    string        `json:"pairID"`
 	Embedding llm.Embedding `json:"embedding"`
 	K         int           `json:"k"`
 }
@@ -104,8 +113,10 @@ type GetMemoriesV2 struct {
 }
 
 type ParamsLongTermMemoriesV2 struct {
-	Vector     []float32 `json:"vector"`
-	NodeCounts []int     `json:"nodeCounts"`
+	PairID         string             `json:"pairID"`
+	Vector         firestore.Vector32 `json:"vector"`
+	NodeCounts     []int              `json:"nodeCounts"`
+	NodeThresholds []float64          `json:"nodeThresholds"`
 }
 
 type ParamsShortTermMemoriesV2 struct {
@@ -142,4 +153,10 @@ func (f *FeedbackV1) FromForm(r *http.Request) error {
 		return errors.New("feedback is required")
 	}
 	return nil
+}
+
+type SaveResponseV1 struct {
+	UserID   string `json:"userID"`
+	PairID   string `json:"pairID"`
+	Response string `json:"response"`
 }

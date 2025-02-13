@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"cloud.google.com/go/firestore"
 	"github.com/ditto-assistant/backend/cfg/secr"
 	apiv1 "github.com/ditto-assistant/backend/pkg/api/v1"
 	apiv2 "github.com/ditto-assistant/backend/pkg/api/v2"
@@ -20,6 +21,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/middleware"
 	"github.com/ditto-assistant/backend/pkg/services/db"
 	"github.com/ditto-assistant/backend/pkg/services/db/users"
+	"github.com/ditto-assistant/backend/pkg/services/firestoremem"
 	"github.com/ditto-assistant/backend/pkg/services/llm"
 	"github.com/ditto-assistant/backend/pkg/services/llm/cerebras"
 	"github.com/ditto-assistant/backend/pkg/services/llm/claude"
@@ -81,6 +83,7 @@ func main() {
 	mux.HandleFunc("POST /v1/presign-url", v1Client.PresignURL)
 	mux.HandleFunc("POST /v1/get-memories", v1Client.GetMemories)
 	mux.HandleFunc("POST /v1/feedback", v1Client.Feedback)
+	mux.HandleFunc("POST /v1/save-response", v1Client.SaveResponse)
 	mux.HandleFunc("POST /v1/stripe/checkout-session", stripeClient.CreateCheckoutSession)
 	mux.HandleFunc("POST /v1/stripe/webhook", stripeClient.HandleWebhook)
 
@@ -237,31 +240,82 @@ func main() {
 			bod.Model = llm.ModelTextEmbedding004
 		}
 		slog := slog.With("action", "embed", "userID", bod.UserID, "model", bod.Model, "email", user.Email.String)
-
 		var embedding llm.Embedding
+		var tokens int64
 		if bod.Model == llm.ModelTextEmbedding3Small {
 			embedding, err = openai.GenerateEmbedding(ctx, bod.Text, bod.Model)
+			tokens = int64(llm.EstimateTokens(bod.Text))
 		} else {
-			embeddings, err := googaiClient.Embed(ctx, googai.EmbedRequest{
-				Documents: []string{bod.Text},
-				Model:     bod.Model,
-			})
+			embedding, tokens, err = googaiClient.EmbedSingle(ctx, bod.Text, bod.Model)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			embedding = embeddings[0]
 		}
-
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(embedding)
-
 		sdCtx.Run(func(ctx context.Context) {
-			tokens := llm.EstimateTokens(bod.Text)
 			slog.Debug("receipt", "input_tokens", tokens)
 			receipt := db.Receipt{
 				UserID:      user.ID,
-				TotalTokens: int64(tokens),
+				TotalTokens: tokens,
+				ServiceName: bod.Model,
+			}
+			if err := receipt.Insert(ctx); err != nil {
+				slog.Error("failed to insert receipt", "error", err)
+			}
+		})
+	})
+
+	// - MARK: create-prompt
+	mux.HandleFunc("POST /v1/create-prompt", func(w http.ResponseWriter, r *http.Request) {
+		tok, err := coreSvc.Auth.VerifyToken(r)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		var bod rq.CreatePromptV1
+		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		err = tok.Check(bod.UserID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+			return
+		}
+		user := users.User{UID: bod.UserID}
+		ctx := r.Context()
+		if err := user.GetByUID(ctx, db.D); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if bod.Model == "" {
+			bod.Model = llm.ModelTextEmbedding005
+		}
+		slog := slog.With("action", "embed", "userID", bod.UserID, "model", bod.Model, "email", user.Email.String)
+		embedding, tokens, err := googaiClient.EmbedSingle(ctx, bod.Prompt, bod.Model)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		id, err := coreSvc.Memories.CreatePrompt(ctx, bod.UserID, &firestoremem.CreatePromptRequest{
+			DeviceID:        bod.DeviceID,
+			Prompt:          bod.Prompt,
+			EmbeddingModel:  bod.Model,
+			EmbeddingVector: firestore.Vector32(embedding),
+		})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain")
+		w.Write([]byte(id))
+		sdCtx.Run(func(ctx context.Context) {
+			slog.Debug("receipt", "input_tokens", tokens)
+			receipt := db.Receipt{
+				UserID:      user.ID,
+				TotalTokens: tokens,
 				ServiceName: bod.Model,
 			}
 			if err := receipt.Insert(ctx); err != nil {
@@ -290,6 +344,17 @@ func main() {
 			bod.K = 5
 		}
 		ctx := r.Context()
+		if len(bod.Embedding) == 0 && bod.PairID == "" {
+			http.Error(w, "embedding or pairID is required", http.StatusBadRequest)
+		}
+		if bod.PairID != "" {
+			embedding, err := coreSvc.Memories.GetEmbedding(ctx, bod.UserID, bod.PairID)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			bod.Embedding = llm.Embedding(embedding)
+		}
 		examples, err := db.SearchExamples(ctx, bod.Embedding, db.WithK(bod.K))
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)

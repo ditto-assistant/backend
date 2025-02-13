@@ -17,6 +17,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/core"
 	"github.com/ditto-assistant/backend/pkg/services/db"
 	"github.com/ditto-assistant/backend/pkg/services/db/users"
+	"github.com/ditto-assistant/backend/pkg/services/firestoremem"
 	"github.com/ditto-assistant/backend/pkg/services/llm/openai/dalle"
 	"github.com/ditto-assistant/backend/pkg/services/search"
 	"github.com/ditto-assistant/backend/types/rp"
@@ -433,5 +434,39 @@ func (s *Service) Feedback(w http.ResponseWriter, r *http.Request) {
 		"version", bod.Version,
 		"type", bod.Type,
 		"feedback", bod.Feedback)
+	w.WriteHeader(http.StatusCreated)
+}
+
+// - MARK: save-response
+
+func (s *Service) SaveResponse(w http.ResponseWriter, r *http.Request) {
+	slog := slog.With("path", "v1/save-response")
+	tok, err := s.sc.Auth.VerifyToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	var bod rq.SaveResponseV1
+	if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
+		slog.Error("Failed to decode request body", "error", err)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	err = tok.Check(bod.UserID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	slog = slog.With("userID", bod.UserID)
+	err = s.sc.Memories.SaveResponse(r.Context(), &firestoremem.SaveResponseRequest{
+		UserID:   bod.UserID,
+		PairID:   bod.PairID,
+		Response: bod.Response,
+	})
+	if err != nil {
+		slog.Error("Failed to save response", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	w.WriteHeader(http.StatusCreated)
 }
