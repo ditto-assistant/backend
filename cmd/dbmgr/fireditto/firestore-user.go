@@ -144,7 +144,8 @@ func (f *Command) embedMem(ctx context.Context) error {
 			end = len(docs)
 		}
 		batch := docs[i:end]
-		contents := make([]string, len(batch))
+		skipList := make([]bool, len(batch))
+		contents := make([]string, 0, len(batch))
 		for j, doc := range batch {
 			data, err := doc.DataAt(f.Mem.Embed.ContentField)
 			if err != nil {
@@ -161,7 +162,15 @@ func (f *Command) embedMem(ctx context.Context) error {
 				rp.TrimStuff(&str, "![DittoImage](", ")", nil)
 				rp.FormatToolsResponse(&str)
 			}
-			contents[j] = str
+			if str == "" {
+				skipList[j] = true
+				continue
+			}
+			contents = append(contents, str)
+		}
+		if len(contents) == 0 {
+			slog.Info("No contents to embed", "batch", i, "end", end)
+			continue
 		}
 		var embedResp googai.EmbedResponse
 		err = googaiClient.Embed(ctx, &googai.EmbedRequest{
@@ -171,13 +180,18 @@ func (f *Command) embedMem(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("error embedding batch starting at %d: %w", i, err)
 		}
+		responseIndex := 0
 		for j, doc := range batch {
+			if skipList[j] {
+				continue
+			}
 			_, err := bulkWriter.Update(doc.Ref, []firestore.Update{
-				{Path: f.Mem.Embed.EmbedField, Value: firestore.Vector32(embedResp.Embeddings[j])},
+				{Path: f.Mem.Embed.EmbedField, Value: firestore.Vector32(embedResp.Embeddings[responseIndex])},
 			})
 			if err != nil {
 				return fmt.Errorf("error updating document %s: %w", doc.Ref.ID, err)
 			}
+			responseIndex++
 		}
 		slog.Info("Processed batch", "start", i, "end", end, "total", len(docs))
 	}
