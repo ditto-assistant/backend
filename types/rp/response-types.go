@@ -42,15 +42,16 @@ func (BalanceV1) Zeroes() BalanceV1 {
 
 // Memory represents a conversation memory with vector similarity
 type Memory struct {
-	ID              string             `json:"id"`
-	Score           float32            `json:"score"`
-	Prompt          string             `json:"prompt" firestore:"prompt"`
-	Response        string             `json:"response" firestore:"response"`
-	Timestamp       time.Time          `json:"timestamp" firestore:"timestamp"`
-	VectorDistance  float32            `json:"vector_distance" firestore:"vector_distance"`
-	EmbeddingVector firestore.Vector32 `json:"-" firestore:"embedding_vector"`
-	Depth           int                `json:"depth" firestore:"-"`
-	Children        []Memory           `json:"children,omitempty" firestore:"-"`
+	ID                 string             `json:"id"`
+	Score              float32            `json:"score"`
+	Prompt             string             `json:"prompt" firestore:"prompt"`
+	Response           string             `json:"response" firestore:"response"`
+	Timestamp          time.Time          `json:"timestamp" firestore:"timestamp"`
+	VectorDistance     float32            `json:"vector_distance" firestore:"vector_distance"`
+	EmbeddingPrompt5   firestore.Vector32 `json:"-" firestore:"embedding_prompt_5"`
+	EmbeddingResponse5 firestore.Vector32 `json:"-" firestore:"embedding_response_5"`
+	Depth              int                `json:"depth" firestore:"-"`
+	Children           []Memory           `json:"children,omitempty" firestore:"-"`
 }
 
 // MemoriesV1 represents the response for getting memories

@@ -170,6 +170,9 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 		if err != nil {
 			return nil, fmt.Errorf("failed to get embedding by pairID: %w", err)
 		}
+		if len(embedding) == 0 {
+			return nil, fmt.Errorf("embedding is empty")
+		}
 		req.LongTerm.Vector = embedding
 	}
 
@@ -179,7 +182,7 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 
 	// First level search
 	memoriesRef := cl.conversationsRef(req.UserID)
-	vectorQuery := memoriesRef.FindNearest("embedding_vector",
+	vectorQuery := memoriesRef.FindNearest("embedding_prompt_5",
 		req.LongTerm.Vector,
 		req.LongTerm.NodeCounts[0],
 		firestore.DistanceMeasureDotProduct,
@@ -229,8 +232,8 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 		nodeCount := req.LongTerm.NodeCounts[depth]
 		// Request more memories than needed since we might skip some duplicates
 		adjustedNodeCount := nodeCount * 2
-		vectorQuery := memoriesRef.FindNearest("embedding_vector",
-			parent.EmbeddingVector,
+		vectorQuery := memoriesRef.FindNearest("embedding_response_5",
+			parent.EmbeddingResponse5,
 			adjustedNodeCount,
 			firestore.DistanceMeasureDotProduct,
 			&firestore.FindNearestOptions{
