@@ -264,7 +264,6 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 				slog.Debug("skipping duplicate memory", "id", doc.Ref.ID, "depth", depth)
 				continue
 			}
-			// Break if we have enough unique children
 			if len(children) >= nodeCount {
 				break
 			}
