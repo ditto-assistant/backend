@@ -228,12 +228,21 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 		if depth >= len(req.LongTerm.NodeCounts) {
 			return nil
 		}
+		var embedding firestore.Vector32
+		if len(parent.EmbeddingResponse5) == 0 {
+			embedding = parent.EmbeddingPrompt5
+		} else {
+			embedding = parent.EmbeddingResponse5
+		}
+		if len(embedding) == 0 {
+			return nil
+		}
 
 		nodeCount := req.LongTerm.NodeCounts[depth]
 		// Request more memories than needed since we might skip some duplicates
 		adjustedNodeCount := nodeCount * 2
 		vectorQuery := memoriesRef.FindNearest("embedding_response_5",
-			parent.EmbeddingResponse5,
+			embedding,
 			adjustedNodeCount,
 			firestore.DistanceMeasureDotProduct,
 			&firestore.FindNearestOptions{
