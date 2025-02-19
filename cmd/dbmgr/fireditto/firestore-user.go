@@ -136,7 +136,7 @@ func (f *Command) embedMem(ctx context.Context) error {
 	bulkWriter := f.fs.BulkWriter(ctx)
 	defer func() {
 		bulkWriter.End()
-		slog.Info("bulk writer ended")
+		slog.Info("firestore bulk writer ended")
 	}()
 	for i := 0; i < len(docs); i += batchSize {
 		end := i + batchSize
