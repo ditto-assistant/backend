@@ -5,11 +5,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
 	"cloud.google.com/go/firestore"
 	"firebase.google.com/go/v4/auth"
+	"github.com/ditto-assistant/backend/pkg/services/llm/googai"
 )
 
 //go:generate stringer -type=Mode -trimprefix=Mode
@@ -55,10 +57,16 @@ func (o *Op) Parse(operation string) error {
 	return nil
 }
 
+func (c *Command) Init() error {
+	c.logger = slog.Default()
+	return nil
+}
+
 type Command struct {
 	Mode       Mode
 	Operation  Op
 	Email, UID string
+	DryRun     bool
 	User       struct {
 		Offset, Limit int
 		order         string
@@ -67,14 +75,17 @@ type Command struct {
 		Embed        CommandEmbed
 		DeleteColumn string
 		AllUsers     bool
+		SkipUserIDs  stringSlice
 	}
-	fs   *firestore.Client
-	auth *auth.Client
+	fs     *firestore.Client
+	auth   *auth.Client
+	googai *googai.Client
+	logger *slog.Logger
 }
 
 type CommandEmbed struct {
-	ContentField string
-	EmbedField   string
+	// Content + Embed Field names
+	Fields       stringPairs
 	ModelVersion int
 	Start        timeVar
 }
@@ -82,20 +93,17 @@ type CommandEmbed struct {
 func (e *CommandEmbed) String() string {
 	if e.Start.Time().IsZero() {
 		return fmt.Sprintf(
-			"content field: %s, embed field: %s, model version: %d",
-			e.ContentField, e.EmbedField, e.ModelVersion)
+			"fields: %v, model version: %d",
+			e.Fields, e.ModelVersion)
 	}
 	return fmt.Sprintf(
-		"content field: %s, embed field: %s, model version: %d, start: %s",
-		e.ContentField, e.EmbedField, e.ModelVersion, e.Start.Time())
+		"fields: %v, model version: %d, start: %s",
+		e.Fields, e.ModelVersion, e.Start.Time())
 }
 
 func (e *CommandEmbed) Validate() error {
-	if e.ContentField == "" {
-		return errors.New("content field must be provided")
-	}
-	if e.EmbedField == "" {
-		return errors.New("embed field must be provided")
+	if len(e.Fields) == 0 {
+		return errors.New("fields must be provided")
 	}
 	if e.ModelVersion < 4 || e.ModelVersion > 5 {
 		return fmt.Errorf("invalid model version: %d", e.ModelVersion)
@@ -127,6 +135,7 @@ func (f *Command) Parse(args []string) error {
 	firestoreFlags := flag.NewFlagSet("firestore", flag.ExitOnError)
 	firestoreFlags.StringVar(&f.UID, "uid", "", "user ID")
 	firestoreFlags.StringVar(&f.Email, "email", "", "user email")
+	firestoreFlags.BoolVar(&f.DryRun, "dry-run", false, "dry run")
 
 	switch f.Mode {
 	case ModeUser:
@@ -141,10 +150,10 @@ func (f *Command) Parse(args []string) error {
 		firestoreFlags.BoolVar(&f.Mem.AllUsers, "all-users", false, "all users")
 		switch f.Operation {
 		case OpEmbed:
-			firestoreFlags.StringVar(&f.Mem.Embed.ContentField, "content-field", "prompt", "content field")
-			firestoreFlags.StringVar(&f.Mem.Embed.EmbedField, "embed-field", "embedding_prompt_5", "embed field")
+			firestoreFlags.Var(&f.Mem.Embed.Fields, "fields", "prompt,embedding_prompt_5,response,embedding_response_5")
 			firestoreFlags.IntVar(&f.Mem.Embed.ModelVersion, "model-version", 5, "model version")
 			firestoreFlags.Var(&f.Mem.Embed.Start, "start", "start time")
+			firestoreFlags.Var(&f.Mem.SkipUserIDs, "skip-uids", "skip comma-separated user IDs")
 		case OpDeleteColumn:
 			firestoreFlags.StringVar(&f.Mem.DeleteColumn, "col", "embedding", "delete column")
 		}
@@ -165,11 +174,8 @@ func (f *Command) Validate() error {
 	case ModeMem:
 		switch f.Operation {
 		case OpEmbed:
-			if f.Mem.Embed.ContentField == "" {
-				return errors.New("content field must be provided")
-			}
-			if f.Mem.Embed.EmbedField == "" {
-				return errors.New("embed field must be provided")
+			if err := f.Mem.Embed.Validate(); err != nil {
+				return fmt.Errorf("invalid embed flags: %s", err)
 			}
 		case OpDeleteColumn:
 			if f.Mem.DeleteColumn == "" {
@@ -229,4 +235,43 @@ func (t *timeVar) Set(value string) error {
 
 func (t timeVar) Time() time.Time {
 	return time.Time(t)
+}
+
+type stringSlice []string
+
+func (s *stringSlice) String() string {
+	return strings.Join(*s, ",")
+}
+
+func (s *stringSlice) Set(value string) error {
+	*s = strings.Split(value, ",")
+	return nil
+}
+
+type stringPair struct {
+	ContentField, EmbeddingField string
+}
+
+type stringPairs []stringPair
+
+func (s *stringPairs) String() string {
+	var buf strings.Builder
+	for i, pair := range *s {
+		if i > 0 {
+			buf.WriteString(",")
+		}
+		buf.WriteString(fmt.Sprintf("%s,%s", pair.ContentField, pair.EmbeddingField))
+	}
+	return buf.String()
+}
+
+func (s *stringPairs) Set(value string) error {
+	parts := strings.Split(value, ",")
+	if len(parts)%2 != 0 {
+		return fmt.Errorf("invalid number of parts: %d", len(parts))
+	}
+	for i := 0; i < len(parts); i += 2 {
+		*s = append(*s, stringPair{ContentField: parts[i], EmbeddingField: parts[i+1]})
+	}
+	return nil
 }

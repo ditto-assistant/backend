@@ -71,3 +71,11 @@ gh-release:
 # create a new release for the latest tag with auto-generated release notes
 create-patch-release: push-new-tag gh-release
 alias cpr := create-patch-release
+
+# Run 0.11 migration on single user
+@migrate-11-single EMAIL:
+    just db firebase mem delcol -email {{EMAIL}} -col embedding
+    just db -env prod firebase mem embed -email {{EMAIL}} -fields prompt,embedding_prompt_5,response,embedding_response_5 -model-version 5
+
+@migrate-11-all:
+    just db -env prod firebase mem embed -all-users -fields prompt,embedding_prompt_5,response,embedding_response_5 -model-version 5

@@ -9,11 +9,13 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	firebase "firebase.google.com/go/v4"
 	"github.com/ditto-assistant/backend/cfg/envs"
@@ -52,8 +54,20 @@ func main() {
 	)
 	var shutdown sync.WaitGroup
 	defer shutdown.Wait()
+	// Create a context that will be cancelled on SIGINT or SIGTERM
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-sigChan
+		slog.Info("Received signal, initiating shutdown", "signal", sig)
+		cancel()
+	}()
+	defer func() {
+		signal.Stop(sigChan)
+		cancel()
+	}()
+
 	globalFlags := flag.NewFlagSet("global", flag.ExitOnError)
 	logLevelFlag := globalFlags.String("log", "info", "log level")
 	envFlag := globalFlags.String("env", envs.EnvLocal.String(), "ditto environment")
@@ -124,10 +138,13 @@ func main() {
 		slog.Debug("search mode", "query", query, "env", dittoEnv)
 
 	case "firebase":
-		mode = ModeFirebase
+		if err := firebaseFlags.Init(); err != nil {
+			log.Fatalf("firebase command init: %s", err)
+		}
 		if err := firebaseFlags.Parse(globalFlags.Args()[1:]); err != nil {
 			log.Fatalf("invalid firebase flags: %s", err)
 		}
+		mode = ModeFirebase
 
 	case "sync":
 		if globalFlags.NArg() < 2 {
