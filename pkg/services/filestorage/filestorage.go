@@ -17,11 +17,10 @@ import (
 
 const presignTTL = 24 * time.Hour
 
-var bucketDittoContent = aws.String(envs.DITTO_CONTENT_BUCKET)
-
 type Client struct {
-	S3       *s3.S3
-	urlCache *mapcache.MapCache[string, string]
+	S3            *s3.S3
+	urlCache      *mapcache.MapCache[string, string]
+	contentBucket *string
 }
 
 func NewClient(ctx context.Context) (*Client, error) {
@@ -43,8 +42,9 @@ func NewClient(ctx context.Context) (*Client, error) {
 	}
 	s3 := s3.New(mySession)
 	cl := &Client{
-		S3:       s3,
-		urlCache: urlCache,
+		S3:            s3,
+		urlCache:      urlCache,
+		contentBucket: aws.String(envs.DITTO_CONTENT_BUCKET),
 	}
 	return cl, nil
 }
@@ -60,10 +60,11 @@ func (cl *Client) PresignURL(ctx context.Context, userID, url string) (string, e
 		filename = strings.TrimPrefix(filename, userID+"/")
 		filename = strings.TrimPrefix(filename, "generated-images/") // Remove any existing folder prefix
 		key := fmt.Sprintf("%s/generated-images/%s", userID, filename)
-		objReq, _ := cl.S3.GetObjectRequest(&s3.GetObjectInput{
-			Bucket: bucketDittoContent,
+		input := &s3.GetObjectInput{
+			Bucket: cl.contentBucket,
 			Key:    aws.String(key),
-		})
+		}
+		objReq, _ := cl.S3.GetObjectRequest(input)
 		return objReq.Presign(presignTTL)
 	})
 }

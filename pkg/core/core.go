@@ -9,6 +9,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/services/authfirebase"
 	"github.com/ditto-assistant/backend/pkg/services/filestorage"
 	"github.com/ditto-assistant/backend/pkg/services/firestoremem"
+	"github.com/ditto-assistant/backend/pkg/services/llm/googai"
 )
 
 type Client struct {
@@ -16,6 +17,7 @@ type Client struct {
 	Auth        *authfirebase.Client
 	Memories    *firestoremem.Client
 	FileStorage *filestorage.Client
+	Embedder    *googai.Client
 }
 
 const presignTTL = 24 * time.Hour
@@ -42,10 +44,15 @@ func NewClient(ctx context.Context) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	embedder, err := googai.NewClient(ctx)
+	if err != nil {
+		return nil, err
+	}
 	return &Client{
 		Secr:        secrClient,
 		Auth:        fbAuth,
 		Memories:    firestoremem.NewClient(firestore, fsClient),
 		FileStorage: fsClient,
+		Embedder:    embedder,
 	}, nil
 }
