@@ -178,7 +178,7 @@ func TrimStuff(s *string, prefix, suffix string, replaceFunc func(*string) error
 }
 
 func (mem *Memory) String() string {
-	return fmt.Sprintf("<Memory timestamp=\"%s\">\n  <User>%s</User>\n  <Ditto>%s</Ditto>\n</Memory>\n",
+	return fmt.Sprintf("**Memory (%s)**\n\n**User:**\n%s\n\n**Ditto:**\n%s\n\n",
 		mem.Timestamp.Format("2006-01-02 15:04:05"),
 		mem.Prompt,
 		mem.Response,
@@ -187,49 +187,37 @@ func (mem *Memory) String() string {
 
 func (m MemoriesV2) Bytes() []byte {
 	var b bytes.Buffer
-	b.WriteString("<Memories>\n")
+	b.WriteString("# Memories\n\n")
 	if len(m.LongTerm) > 0 {
-		b.WriteString("  <LongTermMemory type=\"cosine-similarity\">\n")
-		b.WriteString("    <!-- Most relevant prompt/response pairs from user's prompt history -->\n")
-
-		// Write root memories and their children recursively
+		b.WriteString("## Long-Term Memory (Cosine Similarity)\n\n")
+		b.WriteString("*Most relevant prompt/response pairs from user's prompt history*\n\n")
 		for _, mem := range m.LongTerm {
-			writeMemoryWithChildren(&b, &mem, 2)
+			writeMemoryWithChildren(&b, &mem, 0)
 		}
-
-		b.WriteString("  </LongTermMemory>\n")
+		b.WriteRune('\n')
 	}
 	if len(m.ShortTerm) > 0 {
-		b.WriteString("  <ShortTermMemory type=\"recent\">\n")
-		b.WriteString("    <!-- Most recent prompt/response pairs -->\n")
+		b.WriteString("## Short-Term Memory (Recent)\n\n")
+		b.WriteString("*Most recent prompt/response pairs*\n\n")
 		for _, mem := range m.ShortTerm {
-			b.WriteString("    " + mem.String())
+			b.WriteString(mem.String())
 		}
-		b.WriteString("  </ShortTermMemory>\n")
+		b.WriteRune('\n')
 	}
-	b.WriteString("</Memories>")
 	return b.Bytes()
 }
 
-// writeMemoryWithChildren recursively writes a memory and its children with proper indentation
+// writeMemoryWithChildren recursively writes a memory and its children using markdown.
 func writeMemoryWithChildren(b *bytes.Buffer, mem *Memory, indent int) {
-	indentStr := strings.Repeat("  ", indent)
-
-	// Write the memory layer opening tag
-	b.WriteString(fmt.Sprintf("%s<MemoryLayer depth=\"%d\">\n", indentStr, mem.Depth))
-
-	// Write the current memory
-	b.WriteString(indentStr + "  " + mem.String())
-
-	// Write children if any exist
+	headingLevel := min(3+mem.Depth, 6)
+	headingMarks := strings.Repeat("#", headingLevel)
+	fmt.Fprintf(b, "%s Memory Layer (Depth %d)\n\n", headingMarks, mem.Depth)
+	b.WriteString(mem.String())
 	if len(mem.Children) > 0 {
-		b.WriteString(fmt.Sprintf("%s  <RelatedMemories>\n", indentStr))
+		fmt.Fprintf(b, "%s Related Memories\n\n", strings.Repeat("#", headingLevel+1))
 		for _, child := range mem.Children {
-			writeMemoryWithChildren(b, &child, indent+2)
+			writeMemoryWithChildren(b, &child, indent+1)
 		}
-		b.WriteString(fmt.Sprintf("%s  </RelatedMemories>\n", indentStr))
+		b.WriteRune('\n')
 	}
-
-	// Write the memory layer closing tag
-	b.WriteString(fmt.Sprintf("%s</MemoryLayer>\n", indentStr))
 }
