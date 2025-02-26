@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 
@@ -83,29 +84,18 @@ func (cl *Client) GetEmbeddingPrompt(ctx context.Context, userID, pairID string)
 	return embedding.EmbeddingPrompt5, nil
 }
 
-func (cl *Client) GetMemoriesV2(ctx context.Context, req *rq.GetMemoriesV2) (rp.MemoriesV2, error) {
-	var rsp rp.MemoriesV2
-	group, ctx := errgroup.WithContext(ctx)
-	group.Go(func() error {
-		short, err := cl.getShort(ctx, req)
-		if err != nil {
-			return err
-		}
-		rsp.ShortTerm = short
-		return nil
-	})
-	group.Go(func() error {
-		long, err := cl.getLong(ctx, req)
-		if err != nil {
-			return err
-		}
-		rsp.LongTerm = long
-		return nil
-	})
-	if err := group.Wait(); err != nil {
-		return rsp, err
+func (cl *Client) GetMemoriesV2(ctx context.Context, req *rq.GetMemoriesV2) (rsp rp.MemoriesV2, err error) {
+	rsp.ShortTerm, err = cl.getShort(ctx, req)
+	if err != nil {
+		err = fmt.Errorf("failed to get short term memories: %w", err)
+		return
 	}
-	return rsp, nil
+	rsp.LongTerm, err = cl.getLong(ctx, req, rsp.ShortTerm)
+	if err != nil {
+		err = fmt.Errorf("failed to get long term memories: %w", err)
+		return
+	}
+	return
 }
 
 func (cl *Client) getShort(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memory, error) {
@@ -154,7 +144,56 @@ func defaultNodeThresholds(nc int) []float64 {
 	return thresholds
 }
 
-func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memory, error) {
+// normalizeVector normalizes a vector to have unit length
+func normalizeVector(vector firestore.Vector32) firestore.Vector32 {
+	if len(vector) == 0 {
+		return vector
+	}
+
+	var magnitude float64
+	for _, val := range vector {
+		magnitude += float64(val * val)
+	}
+	magnitude = math.Sqrt(magnitude)
+
+	if magnitude == 0 {
+		return vector
+	}
+
+	normalized := make(firestore.Vector32, len(vector))
+	for i, val := range vector {
+		normalized[i] = float32(float64(val) / magnitude)
+	}
+
+	return normalized
+}
+
+// combineVectors adds multiple vectors together and normalizes the result
+func combineVectors(vectors []firestore.Vector32) firestore.Vector32 {
+	if len(vectors) == 0 {
+		return nil
+	}
+
+	vectorLen := len(vectors[0])
+	if vectorLen == 0 {
+		return nil
+	}
+
+	combined := make(firestore.Vector32, vectorLen)
+	for _, vec := range vectors {
+		if len(vec) != vectorLen {
+			slog.Warn("vector length mismatch in combineVectors", "expected", vectorLen, "got", len(vec))
+			continue
+		}
+		for i, val := range vec {
+			combined[i] += val
+		}
+	}
+
+	return normalizeVector(combined)
+}
+
+func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2, shortTermMemories []rp.Memory) ([]rp.Memory, error) {
 	if req.LongTerm == nil {
 		return nil, nil
 	}
@@ -165,25 +204,74 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 	} else if nc != nt {
 		return nil, fmt.Errorf("node thresholds: %v and node counts: %v must be the same length", req.LongTerm.NodeThresholds, req.LongTerm.NodeCounts)
 	}
+
+	var err error
+	var targetEmbedding firestore.Vector32
+	var combinedEmbedding firestore.Vector32
+	var useCombinedVector bool
+
 	if req.LongTerm.PairID != "" {
-		embedding, err := cl.GetEmbeddingPrompt(ctx, req.UserID, req.LongTerm.PairID)
+		targetEmbedding, err = cl.GetEmbeddingPrompt(ctx, req.UserID, req.LongTerm.PairID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get embedding by pairID: %w", err)
 		}
-		if len(embedding) == 0 {
+		if len(targetEmbedding) == 0 {
 			return nil, fmt.Errorf("embedding is empty")
 		}
-		req.LongTerm.Vector = embedding
+		req.LongTerm.Vector = targetEmbedding
+	} else if len(req.LongTerm.Vector) > 0 {
+		// Use provided vector directly
+		targetEmbedding = req.LongTerm.Vector
+	} else {
+		return nil, errors.New("neither pairID nor vector provided")
 	}
 
-	// Keep track of seen memory IDs to avoid duplicates
-	seenMemories := make(map[string]struct{}, req.LongTerm.NodeCounts[0])
-	var mutex sync.RWMutex
+	// Create combined vector from short term memories + target memory
+	if len(shortTermMemories) > 0 {
+		// Collect vectors from short term memories
+		vectors := make([]firestore.Vector32, 0, len(shortTermMemories)+1)
+		vectors = append(vectors, targetEmbedding) // Add target vector first
 
-	// First level search
+		for _, mem := range shortTermMemories {
+			if len(mem.EmbeddingPrompt5) > 0 {
+				vectors = append(vectors, mem.EmbeddingPrompt5)
+			}
+			if len(mem.EmbeddingResponse5) > 0 {
+				vectors = append(vectors, mem.EmbeddingResponse5)
+			}
+		}
+
+		// Combine and normalize
+		combinedEmbedding = combineVectors(vectors)
+		if len(combinedEmbedding) > 0 {
+			useCombinedVector = true
+			slog.Debug("created combined vector from memories",
+				"vectorCount", len(vectors),
+				"shortTermCount", len(shortTermMemories))
+		}
+	}
+	// Keep track of seen memory IDs to avoid duplicates
+	memoryCount := 0
+	if req.ShortTerm != nil {
+		memoryCount = req.ShortTerm.K
+	}
+	for _, nc := range req.LongTerm.NodeCounts {
+		memoryCount += nc
+	}
+	seenMemories := make(map[string]struct{}, memoryCount)
+	var mutex sync.RWMutex
+	rootMemories := make([]rp.Memory, 0, memoryCount)
+	if len(shortTermMemories) > 0 {
+		for _, mem := range shortTermMemories {
+			seenMemories[mem.ID] = struct{}{}
+		}
+	}
+
+	// First search with target vector
+	slog.Debug("performing vector search with target vector", "userID", req.UserID)
 	memoriesRef := cl.conversationsRef(req.UserID)
 	vectorQuery := memoriesRef.FindNearest("embedding_prompt_5",
-		req.LongTerm.Vector,
+		targetEmbedding,
 		req.LongTerm.NodeCounts[0],
 		firestore.DistanceMeasureDotProduct,
 		&firestore.FindNearestOptions{
@@ -192,20 +280,27 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 		})
 	querySnapshot, err := vectorQuery.Documents(ctx).GetAll()
 	if err != nil {
-		return nil, fmt.Errorf("failed to query long term memories: %w", err)
+		return nil, fmt.Errorf("failed to query long term memories with target vector: %w", err)
 	}
 
-	// Process first level results
-	rootMemories := make([]rp.Memory, 0, len(querySnapshot))
 	for _, doc := range querySnapshot {
 		var mem rp.Memory
 		if err := doc.DataTo(&mem); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal memory: %s, err: %w", doc.Ref.ID, err)
 		}
+
+		mutex.RLock()
+		_, seen := seenMemories[doc.Ref.ID]
+		mutex.RUnlock()
+		if seen {
+			slog.Debug("skipping duplicate memory from target vector search", "id", doc.Ref.ID)
+			continue
+		}
+
 		mem.ID = doc.Ref.ID
 		mem.Depth = 0
 		mem.FormatResponse()
-		slog.Debug("adding root memory", "id", mem.ID, "distance", mem.VectorDistance)
+		slog.Debug("adding root memory from target vector", "id", mem.ID, "distance", mem.VectorDistance)
 		if req.StripImages {
 			mem.StripImages()
 		} else {
@@ -213,9 +308,62 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 				return nil, fmt.Errorf("failed to presign images: %w", err)
 			}
 		}
+		mutex.Lock()
 		seenMemories[mem.ID] = struct{}{}
+		mutex.Unlock()
 		rootMemories = append(rootMemories, mem)
 	}
+
+	// Second search with combined vector if available
+	if useCombinedVector {
+		slog.Debug("performing vector search with combined vector", "userID", req.UserID)
+		combinedQuery := memoriesRef.FindNearest("embedding_prompt_5",
+			combinedEmbedding,
+			req.LongTerm.NodeCounts[0],
+			firestore.DistanceMeasureDotProduct,
+			&firestore.FindNearestOptions{
+				DistanceResultField: "vector_distance",
+				DistanceThreshold:   firestore.Ptr(req.LongTerm.NodeThresholds[0]),
+			})
+		combQuerySnapshot, err := combinedQuery.Documents(ctx).GetAll()
+		if err != nil {
+			slog.Warn("failed to query with combined vector, continuing with initial results", "error", err)
+		} else {
+			// Process results from combined vector
+			for _, doc := range combQuerySnapshot {
+				mutex.RLock()
+				_, seen := seenMemories[doc.Ref.ID]
+				mutex.RUnlock()
+				if seen {
+					slog.Debug("skipping duplicate memory from combined vector search", "id", doc.Ref.ID)
+					continue
+				}
+
+				var mem rp.Memory
+				if err := doc.DataTo(&mem); err != nil {
+					return nil, fmt.Errorf("failed to unmarshal memory from combined vector: %s, err: %w", doc.Ref.ID, err)
+				}
+
+				mem.ID = doc.Ref.ID
+				mem.Depth = 0
+				mem.FormatResponse()
+				slog.Debug("adding root memory from combined vector", "id", mem.ID, "distance", mem.VectorDistance)
+				if req.StripImages {
+					mem.StripImages()
+				} else {
+					if err := mem.PresignImages(ctx, req.UserID, cl.fsClient); err != nil {
+						return nil, fmt.Errorf("failed to presign images: %w", err)
+					}
+				}
+				mutex.Lock()
+				seenMemories[mem.ID] = struct{}{}
+				mutex.Unlock()
+				rootMemories = append(rootMemories, mem)
+			}
+		}
+	}
+
+	slog.Debug("found root memories", "count", len(rootMemories))
 
 	// If only one level requested, return early
 	if len(req.LongTerm.NodeCounts) == 1 {
@@ -235,6 +383,7 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 			embedding = parent.EmbeddingResponse5
 		}
 		if len(embedding) == 0 {
+			slog.Debug("no valid embedding found for parent memory", "id", parent.ID, "depth", depth)
 			return nil
 		}
 
@@ -319,5 +468,6 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Memo
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
+	slog.Debug("completed memory tree construction", "rootCount", len(rootMemories))
 	return rootMemories, nil
 }
