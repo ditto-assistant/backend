@@ -111,11 +111,24 @@ type GetMemoriesV2 struct {
 	StripImages bool                       `json:"stripImages"`
 }
 
+func (req *GetMemoriesV2) TotalRequestedMemories() int {
+	memoriesRequested := 0
+	if req.ShortTerm != nil {
+		memoriesRequested = req.ShortTerm.K
+	}
+	for _, nc := range req.LongTerm.NodeCounts {
+		memoriesRequested += nc
+	}
+	return memoriesRequested
+}
+
 type ParamsLongTermMemoriesV2 struct {
 	PairID         string             `json:"pairID"`
 	Vector         firestore.Vector32 `json:"vector"`
 	NodeCounts     []int              `json:"nodeCounts"`
 	NodeThresholds []float64          `json:"nodeThresholds"`
+	// SkipShortTermContext skips the normalized vector summation of short-term memories.
+	SkipShortTermContext bool `json:"skipShortTermContext"`
 }
 
 type ParamsShortTermMemoriesV2 struct {
