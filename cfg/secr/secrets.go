@@ -11,19 +11,19 @@ import (
 	"google.golang.org/api/secretmanager/v1"
 )
 
-type SecretID string
+type Secret string
 
 // Secrets
 var (
-	BACKBLAZE_API_KEY         SecretID
-	OPENAI_DALLE_API_KEY      SecretID
-	OPENAI_LLM_API_KEY        SecretID
-	OPENAI_EMBEDDINGS_API_KEY SecretID
-	LIBSQL_ENCRYPTION_KEY     SecretID
-	TURSO_AUTH_TOKEN          SecretID
+	BACKBLAZE_API_KEY         Secret
+	OPENAI_DALLE_API_KEY      Secret
+	OPENAI_LLM_API_KEY        Secret
+	OPENAI_EMBEDDINGS_API_KEY Secret
+	LIBSQL_ENCRYPTION_KEY     Secret
+	TURSO_AUTH_TOKEN          Secret
 )
 
-func (s SecretID) String() string { return string(s) }
+func (s Secret) String() string { return string(s) }
 
 // FetchEnv fetches a secret from the secret manager
 // with the environment name prepended to the secret name
@@ -58,20 +58,24 @@ func (cl *Client) Fetch(
 	return string(decoded), nil
 }
 
-func (secPtr *SecretID) fetch(
+func (secPtr *Secret) fetch(
 	ctx context.Context,
 	group *errgroup.Group,
 	cl *Client,
 	secName string,
 ) {
 	group.Go(func() error {
-		sec, err := cl.Fetch(ctx, secName)
-		if err != nil {
-			return err
-		}
-		*secPtr = SecretID(sec)
-		return nil
+		return secPtr.get(ctx, cl, secName)
 	})
+}
+
+func (secPtr *Secret) get(ctx context.Context, cl *Client, secName string) error {
+	sec, err := cl.Fetch(ctx, secName)
+	if err != nil {
+		return err
+	}
+	*secPtr = Secret(sec)
+	return nil
 }
 
 type Client struct {
