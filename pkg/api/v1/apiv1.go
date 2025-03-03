@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 
 func (s *Service) Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/balance", s.Balance)
+	mux.HandleFunc("GET /v1/conversations", s.GetConversations)
 	mux.HandleFunc("POST /v1/google-search", s.WebSearch)
 	mux.HandleFunc("POST /v1/generate-image", s.GenerateImage)
 	mux.HandleFunc("POST /v1/presign-url", s.PresignURL)
@@ -485,10 +487,10 @@ func (s *Service) Embed(w http.ResponseWriter, r *http.Request) {
 		tokens = int64(llm.EstimateTokens(bod.Text))
 	} else {
 		embedding, tokens, err = s.sc.Embedder.EmbedSingle(ctx, bod.Text, bod.Model)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(embedding)
@@ -661,4 +663,92 @@ func (s *Service) SaveResponse(w http.ResponseWriter, r *http.Request) {
 			slog.Error("failed to insert receipt", "error", err)
 		}
 	})
+}
+
+// GetConversations handles paginated retrieval of conversation history
+func (s *Service) GetConversations(w http.ResponseWriter, r *http.Request) {
+	tok, err := s.sc.Auth.VerifyToken(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	q := r.URL.Query()
+	userID := q.Get("userId")
+	if userID == "" {
+		http.Error(w, "userId is required", http.StatusBadRequest)
+		return
+	}
+	err = tok.Check(userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	limit := 20 // Default limit
+	if limitStr := q.Get("limit"); limitStr != "" {
+		if parsedLimit, err := strconv.Atoi(limitStr); err == nil && parsedLimit > 0 {
+			limit = parsedLimit
+		}
+	}
+	var cursor string
+	if cursorStr := q.Get("cursor"); cursorStr != "" {
+		cursor = cursorStr
+	}
+	memoriesRef := s.sc.Memories.ConversationsRef(userID)
+	query := memoriesRef.OrderBy("timestamp", firestore.Desc).Limit(limit + 1) // Get one extra to determine if there are more pages
+
+	if cursor != "" {
+		cursorDoc, err := memoriesRef.Doc(cursor).Get(r.Context())
+		if err != nil {
+			http.Error(w, "Invalid cursor", http.StatusBadRequest)
+			return
+		}
+		query = query.StartAfter(cursorDoc)
+	}
+	docs, err := query.Documents(r.Context()).GetAll()
+	if err != nil {
+		slog.Error("failed to query conversations", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	hasNextPage := len(docs) > limit
+	if hasNextPage {
+		docs = docs[:limit] // Remove the extra document we fetched
+	}
+
+	messages := make([]rp.Memory, 0, len(docs))
+	for _, doc := range docs {
+		var mem rp.Memory
+		if err := doc.DataTo(&mem); err != nil {
+			slog.Error("failed to unmarshal memory", "error", err)
+			continue
+		}
+		mem.ID = doc.Ref.ID
+		mem.FormatResponse()
+		if err := mem.PresignImages(r.Context(), userID, s.sc.FileStorage); err != nil {
+			slog.Error("failed to presign images", "error", err)
+			continue
+		}
+		messages = append(messages, mem)
+	}
+
+	nextCursor := ""
+	if hasNextPage && len(messages) > 0 {
+		nextCursor = messages[len(messages)-1].ID
+	}
+
+	response := struct {
+		Messages   []rp.Memory `json:"messages"`
+		NextCursor string      `json:"nextCursor,omitempty"`
+	}{
+		Messages:   messages,
+		NextCursor: nextCursor,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		slog.Error("failed to encode response", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 }

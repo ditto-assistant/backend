@@ -14,6 +14,6 @@ func NewClient(firestore *firestore.Client, fsClient *filestorage.Client) *Clien
 	return &Client{firestore: firestore, fsClient: fsClient}
 }
 
-func (cl *Client) conversationsRef(userID string) *firestore.CollectionRef {
+func (cl *Client) ConversationsRef(userID string) *firestore.CollectionRef {
 	return cl.firestore.Collection("memory").Doc(userID).Collection("conversations")
 }
