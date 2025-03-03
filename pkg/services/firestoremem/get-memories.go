@@ -31,7 +31,7 @@ func (cl *Client) getShort(ctx context.Context, req *rq.GetMemoriesV2) ([]rp.Mem
 	if req.ShortTerm == nil || req.ShortTerm.K == 0 {
 		return nil, nil
 	}
-	memoriesRef := cl.conversationsRef(req.UserID)
+	memoriesRef := cl.ConversationsRef(req.UserID)
 	query := memoriesRef.OrderBy("timestamp", firestore.Desc).Limit(req.ShortTerm.K)
 	docs, err := query.Documents(ctx).GetAll()
 	if err != nil {
@@ -107,7 +107,7 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2, shortTermM
 		seenMemories[req.LongTerm.PairID] = struct{}{}
 	}
 	var mutex sync.RWMutex
-	memoriesRef := cl.conversationsRef(req.UserID)
+	memoriesRef := cl.ConversationsRef(req.UserID)
 	{
 		g, ctx := errgroup.WithContext(ctx)
 		g.Go(func() error {

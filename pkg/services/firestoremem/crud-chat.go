@@ -21,7 +21,7 @@ type CreatePromptRequest struct {
 }
 
 func (cl *Client) CreatePrompt(ctx context.Context, userID string, req *CreatePromptRequest) (string, error) {
-	pair := cl.conversationsRef(userID).NewDoc()
+	pair := cl.ConversationsRef(userID).NewDoc()
 	_, err := pair.Create(ctx, req)
 	if err != nil {
 		return "", err
@@ -35,7 +35,7 @@ type SaveResponseRequest struct {
 }
 
 func (cl *Client) SaveResponse(ctx context.Context, req *SaveResponseRequest) error {
-	pair := cl.conversationsRef(req.UserID).Doc(req.PairID)
+	pair := cl.ConversationsRef(req.UserID).Doc(req.PairID)
 	_, err := pair.Update(ctx, []firestore.Update{
 		{Path: "response", Value: req.Response},
 		{Path: ColumnEmbeddingResponse5, Value: req.EmbeddingResponse5},
@@ -47,7 +47,7 @@ func (cl *Client) SaveResponse(ctx context.Context, req *SaveResponseRequest) er
 }
 
 func (cl *Client) GetEmbeddingPrompt(ctx context.Context, userID, pairID string) (firestore.Vector32, error) {
-	pair := cl.conversationsRef(userID).Doc(pairID)
+	pair := cl.ConversationsRef(userID).Doc(pairID)
 	doc, err := pair.Get(ctx)
 	if err != nil {
 		return nil, err
