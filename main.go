@@ -68,7 +68,7 @@ func main() {
 		Dalle:        dalleClient,
 	}).Routes(mux)
 	stripe.NewClient(coreSvc.Secr, coreSvc.Auth).Routes(mux)
-	apiv2.NewService(coreSvc).Routes(mux)
+	apiv2.NewService(coreSvc, sdCtx).Routes(mux)
 	cerebrasClient := cerebras.NewService(&sdCtx, coreSvc.Secr)
 
 	webClient := web.NewClient(coreSvc)
