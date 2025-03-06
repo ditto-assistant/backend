@@ -2,6 +2,7 @@ package googai
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	aiplatform "cloud.google.com/go/aiplatform/apiv1"
@@ -29,7 +30,7 @@ func NewClient(ctx context.Context) (*Client, error) {
 	apiEndpoint := fmt.Sprintf("%s-aiplatform.googleapis.com:443", location)
 	client, err := aiplatform.NewPredictionClient(ctx, option.WithEndpoint(apiEndpoint))
 	if err != nil {
-		return nil, fmt.Errorf("failed to create prediction client: %w", err)
+		return nil, fmt.Errorf("aiplatform.NewPredictionClient: %w", err)
 	}
 	return &Client{
 		client:   client,
@@ -38,29 +39,38 @@ func NewClient(ctx context.Context) (*Client, error) {
 	}, nil
 }
 
-// GenerateEmbedding is a convenience method for single document embedding
-func (cl *Client) GenerateEmbedding(ctx context.Context, text string, model llm.ServiceName) (llm.Embedding, error) {
-	embeddings, err := cl.Embed(ctx, EmbedRequest{
+// EmbedSingle is a convenience method for single document embedding
+func (cl *Client) EmbedSingle(ctx context.Context, text string, model llm.ServiceName) (llm.Embedding, int64, error) {
+	var rsp EmbedResponse
+	err := cl.Embed(ctx, &EmbedRequest{
 		Documents: []string{text},
 		Model:     model,
-	})
+	}, &rsp)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return embeddings[0], nil
+	if len(rsp.Embeddings) == 0 {
+		return nil, 0, fmt.Errorf("no embeddings returned")
+	}
+	return rsp.Embeddings[0], rsp.BillableCharacterCount, nil
+}
+
+type EmbedResponse struct {
+	Embeddings             []llm.Embedding
+	BillableCharacterCount int64
 }
 
 // Embed generates embeddings for one or more documents in a single request
-func (cl *Client) Embed(ctx context.Context, req EmbedRequest) ([]llm.Embedding, error) {
-	if len(req.Documents) == 0 {
-		return nil, fmt.Errorf("no documents provided")
+func (cl *Client) Embed(ctx context.Context, req *EmbedRequest, rsp *EmbedResponse) error {
+	if err := req.Validate(); err != nil {
+		return err
 	}
-
 	endpoint := fmt.Sprintf("projects/%s/locations/%s/publishers/google/models/%s", cl.project, cl.location, req.Model.String())
-
-	// Create instances for each document
 	instances := make([]*structpb.Value, len(req.Documents))
 	for i, doc := range req.Documents {
+		if doc == "" {
+			return fmt.Errorf("document %d is empty", i)
+		}
 		instance := &structpb.Value{
 			Kind: &structpb.Value_StructValue{
 				StructValue: &structpb.Struct{
@@ -73,21 +83,17 @@ func (cl *Client) Embed(ctx context.Context, req EmbedRequest) ([]llm.Embedding,
 		}
 		instances[i] = instance
 	}
-
-	// Make the prediction request
 	resp, err := cl.client.Predict(ctx, &aiplatformpb.PredictRequest{
 		Endpoint:  endpoint,
 		Instances: instances,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate embeddings: %w", err)
+		return fmt.Errorf("failed to generate embeddings: %w", err)
 	}
-
 	if len(resp.Predictions) == 0 {
-		return nil, fmt.Errorf("no embeddings returned")
+		return fmt.Errorf("no embeddings returned")
 	}
-
-	// Extract embeddings from response
+	rsp.BillableCharacterCount = int64(resp.Metadata.GetStructValue().Fields["billableCharacterCount"].GetNumberValue())
 	embeddings := make([]llm.Embedding, len(resp.Predictions))
 	for i, prediction := range resp.Predictions {
 		values := prediction.GetStructValue().Fields["embeddings"].GetStructValue().Fields["values"].GetListValue().Values
@@ -97,6 +103,20 @@ func (cl *Client) Embed(ctx context.Context, req EmbedRequest) ([]llm.Embedding,
 		}
 		embeddings[i] = embedding
 	}
+	rsp.Embeddings = embeddings
+	return nil
+}
 
-	return embeddings, nil
+func (req *EmbedRequest) Validate() error {
+	if len(req.Documents) == 0 {
+		return fmt.Errorf("no documents provided")
+	}
+	switch req.Model {
+	case llm.ModelTextEmbedding004, llm.ModelTextEmbedding005:
+		return nil
+	case "":
+		return errors.New("model is required")
+	default:
+		return fmt.Errorf("unsupported model: %s", req.Model)
+	}
 }

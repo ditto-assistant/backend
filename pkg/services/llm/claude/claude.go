@@ -125,9 +125,13 @@ func Prompt(ctx context.Context, bod rq.PromptV1, rsp *llm.StreamResponse) error
 		Text: bod.UserPrompt,
 	})
 	messages = append(messages, userMessage)
+	maxTokens := 8192
+	if bod.Model == llm.ModelClaude3Haiku || bod.Model == llm.ModelClaude3Haiku_20240307 {
+		maxTokens = 4096
+	}
 	req := Request{
 		Messages:         messages,
-		MaxTokens:        8192,
+		MaxTokens:        maxTokens,
 		Stream:           true,
 		AnthropicVersion: "vertex-2023-10-16",
 		System:           bod.SystemPrompt,

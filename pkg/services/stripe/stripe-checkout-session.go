@@ -14,6 +14,11 @@ import (
 	"github.com/stripe/stripe-go/v80/checkout/session"
 )
 
+func (cl *Client) Routes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /v1/stripe/checkout-session", cl.CreateCheckoutSession)
+	mux.HandleFunc("POST /v1/stripe/webhook", cl.HandleWebhook)
+}
+
 type Client struct {
 	secr          *secr.Client
 	auth          *authfirebase.Client

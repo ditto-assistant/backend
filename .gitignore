@@ -4,3 +4,5 @@ service.json
 secrets
 ditto.db
 ditto.db-journal
+
+.DS_Store
