@@ -99,6 +99,7 @@ func main() {
 	var version string
 	var userBalance int64
 	var firebaseFlags fireditto.Command
+	var force bool
 	switch subcommand {
 	case "migrate":
 		mode = ModeMigrate
@@ -121,6 +122,7 @@ func main() {
 		ingestFlags := flag.NewFlagSet("ingest", flag.ExitOnError)
 		ingestFlags.StringVar(&folder, "folder", "cmd/dbmgr/tool-examples", "folder to ingest")
 		ingestFlags.BoolVar(&dryRun, "dry-run", false, "dry run")
+		ingestFlags.BoolVar(&force, "force", false, "force embedding even if the version is the same")
 		ingestFlags.Parse(globalFlags.Args()[1:])
 
 	case "search":
@@ -207,7 +209,7 @@ func main() {
 			log.Fatalf("failed to rollback database: %s", err)
 		}
 	case ModeIngest:
-		if err := ingestPromptExamples(ctx, folder, dryRun); err != nil {
+		if err := ingestPromptExamples(ctx, folder, dryRun, force); err != nil {
 			log.Fatalf("failed to ingest prompt examples: %s", err)
 		}
 	case ModeSearch:
@@ -317,8 +319,8 @@ func testSearch(ctx context.Context, query string) error {
 
 // - MARK: Ingest Examples
 
-func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error {
-	slog.Info("ingesting prompt examples", "folder", folder, "dry-run", dryRun)
+func ingestPromptExamples(ctx context.Context, folder string, dryRun, forceEmbed bool) error {
+	slog.Info("ingesting prompt examples", "folder", folder, "dry-run", dryRun, "force-embed", forceEmbed)
 	minVersion := "v0.0.1"
 	latestVersion, err := getLatestVersion(ctx)
 	if err != nil {
@@ -384,6 +386,61 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 			return fmt.Errorf("error getting service ID for %s: %w", tool.ServiceName, err)
 		}
 
+		// Check if the tool already exists
+		type existingTool struct {
+			id      int64
+			version string
+		}
+		var existingTools []existingTool
+		rows, err := tx.QueryContext(ctx, "SELECT id, version FROM tools WHERE name = ?", tool.Name)
+		if err != nil {
+			return fmt.Errorf("error checking if tool exists: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			var version string
+			if err := rows.Scan(&id, &version); err != nil {
+				rows.Close()
+				return fmt.Errorf("error scanning tool row: %w", err)
+			}
+			existingTools = append(existingTools, existingTool{id: id, version: version})
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("error iterating tool rows: %w", err)
+		}
+
+		// Skip if same version exists and force flag is not set
+		if !forceEmbed {
+			sameVersionExists := false
+			for _, existingTool := range existingTools {
+				if existingTool.version == tool.Version {
+					sameVersionExists = true
+					break
+				}
+			}
+			if sameVersionExists {
+				slog.Info("Skipping tool with same version", "tool", tool.Name, "version", tool.Version)
+				continue
+			}
+		}
+
+		// Delete existing tools with the same name (they must have different versions)
+		for _, existingTool := range existingTools {
+			// Delete examples first to maintain referential integrity
+			_, err := tx.ExecContext(ctx, "DELETE FROM examples WHERE tool_id = ?", existingTool.id)
+			if err != nil {
+				return fmt.Errorf("error deleting examples for tool %s: %w", tool.Name, err)
+			}
+
+			// Then delete the tool
+			_, err = tx.ExecContext(ctx, "DELETE FROM tools WHERE id = ?", existingTool.id)
+			if err != nil {
+				return fmt.Errorf("error deleting tool %s: %w", tool.Name, err)
+			}
+			slog.Info("Deleted existing tool", "tool", tool.Name, "id", existingTool.id, "version", existingTool.version)
+		}
+
 		// Insert into tools table
 		result, err := tx.ExecContext(ctx,
 			"INSERT INTO tools (name, description, version, service_id) VALUES (?, ?, ?, ?)",
@@ -409,7 +466,7 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 			}
 		}
 
-		slog.Info("Inserted tool and examples", "tool", tool.Name, "exampleCount", len(tool.Examples))
+		slog.Info("Inserted tool and examples", "tool", tool.Name, "version", tool.Version, "exampleCount", len(tool.Examples))
 	}
 
 	// Commit the transaction
