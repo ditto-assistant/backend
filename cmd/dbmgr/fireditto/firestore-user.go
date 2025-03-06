@@ -205,6 +205,15 @@ func (f *Command) processUserConversations(
 
 const batchSize = 50
 
+// EmbeddingItem tracks an individual content item to be embedded
+type EmbeddingItem struct {
+	DocIndex   int    // Index of document in the batch
+	FieldIndex int    // Index of field in the embed fields
+	Content    string // The content to embed
+	EmbedPath  string // The path where embedding should be stored
+	DocumentID string // Document ID for better logging
+}
+
 func (f *Command) embedBatch(
 	ctx context.Context,
 	docs []*firestore.DocumentSnapshot,
@@ -212,16 +221,16 @@ func (f *Command) embedBatch(
 	bulkWriter *firestore.BulkWriter,
 	logger *slog.Logger,
 ) error {
+	totalEmbeddingCount := 0
+	logger.Info("Starting embedding process", "total_documents", len(docs), "batch_size", batchSize, "model", model)
 	for i := 0; i < len(docs); i += batchSize {
-		end := i + batchSize
-		if end > len(docs) {
-			end = len(docs)
-		}
+		end := min(i+batchSize, len(docs))
 		batch := docs[i:end]
-		contents := make([]string, 0, len(batch))
-		contentIsEmpty := make([][]bool, len(batch))
+		embedItems := make([]EmbeddingItem, 0, len(batch)*len(f.Mem.Embed.Fields))
+		contents := make([]string, 0, len(batch)*len(f.Mem.Embed.Fields))
+		// First pass: collect all items to be embedded
 		for j, doc := range batch {
-			contentIsEmpty[j] = make([]bool, len(f.Mem.Embed.Fields))
+			docEmbedCount := 0
 			for k, pair := range f.Mem.Embed.Fields {
 				data, err := doc.DataAt(pair.ContentField)
 				if err != nil {
@@ -239,16 +248,30 @@ func (f *Command) embedBatch(
 					rp.FormatToolsResponse(&str)
 				}
 				if str == "" {
-					contentIsEmpty[j][k] = true
+					logger.Debug("Skipping empty content", "docID", doc.Ref.ID, "field", pair.ContentField)
 					continue
 				}
+				item := EmbeddingItem{
+					DocIndex:   j,
+					FieldIndex: k,
+					Content:    str,
+					EmbedPath:  pair.EmbeddingField,
+					DocumentID: doc.Ref.ID,
+				}
+				embedItems = append(embedItems, item)
 				contents = append(contents, str)
+				docEmbedCount++
 			}
+			logger.Debug("Document prepared for embedding",
+				"docID", doc.Ref.ID,
+				"fields_to_embed", docEmbedCount,
+				"total_fields", len(f.Mem.Embed.Fields))
 		}
 		if len(contents) == 0 {
-			logger.Info("No contents to embed", "batch", i, "end", end)
+			logger.Info("No contents to embed in this batch", "batch_start", i, "batch_end", end)
 			continue
 		}
+
 		var embedResp googai.EmbedResponse
 		err := f.googai.Embed(ctx, &googai.EmbedRequest{
 			Documents: contents,
@@ -257,31 +280,47 @@ func (f *Command) embedBatch(
 		if err != nil {
 			return fmt.Errorf("error embedding batch starting at %d: %w", i, err)
 		}
-		responseIndex := 0
-		for j, doc := range batch {
-			updates := make([]firestore.Update, 0, len(f.Mem.Embed.Fields))
-			for k, pair := range f.Mem.Embed.Fields {
-				if contentIsEmpty[j][k] {
-					logger.Debug("Skipping empty content", "docID", doc.Ref.ID, "field", pair.EmbeddingField)
-					continue
-				}
-				updates = append(updates, firestore.Update{
-					Path:  pair.EmbeddingField,
-					Value: firestore.Vector32(embedResp.Embeddings[responseIndex]),
-				})
-				responseIndex++
+		if len(embedResp.Embeddings) != len(contents) {
+			return fmt.Errorf("unexpected number of embeddings received: got %d, expected %d",
+				len(embedResp.Embeddings), len(contents))
+		}
+
+		docUpdates := make(map[string][]firestore.Update, len(batch))
+		for idx, item := range embedItems {
+			docID := item.DocumentID
+			if _, exists := docUpdates[docID]; !exists {
+				docUpdates[docID] = make([]firestore.Update, 0, len(f.Mem.Embed.Fields))
 			}
-			if len(updates) == 0 {
-				logger.Debug("No updates to apply for document", "docID", doc.Ref.ID)
+			docUpdates[docID] = append(docUpdates[docID], firestore.Update{
+				Path:  item.EmbedPath,
+				Value: firestore.Vector32(embedResp.Embeddings[idx]),
+			})
+		}
+		updatedDocs := 0
+		for _, doc := range batch {
+			docID := doc.Ref.ID
+			updates, hasUpdates := docUpdates[docID]
+			if !hasUpdates || len(updates) == 0 {
 				continue
 			}
 			_, err := bulkWriter.Update(doc.Ref, updates)
 			if err != nil {
-				return fmt.Errorf("error updating document %s: %w", doc.Ref.ID, err)
+				return fmt.Errorf("error updating document %s: %w", docID, err)
 			}
+			updatedDocs++
+			totalEmbeddingCount += len(updates)
 		}
-		logger.Info("Processed batch", "start", i, "end", end, "total", len(docs))
+		logger.Info("Processed batch",
+			"start", i,
+			"end", end,
+			"documents_updated", updatedDocs,
+			"documents_in_batch", len(batch),
+			"embeddings_applied", len(contents))
 	}
+
+	logger.Info("Completed embedding process",
+		"total_documents", len(docs),
+		"total_embeddings", totalEmbeddingCount)
 	return nil
 }
 
@@ -295,12 +334,25 @@ func (f *Command) deleteColumn(ctx context.Context) error {
 	if f.UID == "" && !f.Mem.AllUsers {
 		return errors.New("user ID is empty")
 	}
-	slog.Info("Starting column deletion", "column", f.Mem.DeleteColumn, "userID", f.UID)
+	slog.Info("Starting column deletion", "column", f.Mem.DeleteColumn, "userID", f.UID, "allUsers", f.Mem.AllUsers)
 	bulkWriter := f.fs.BulkWriter(ctx)
 	defer func() {
 		bulkWriter.End()
 		slog.Info("Successfully deleted column from all documents", "column", f.Mem.DeleteColumn)
 	}()
+
+	if f.Mem.AllUsers {
+		fmt.Println("ALL USERS, ARE YOU SURE?")
+		if !requireConfirmation() {
+			return errors.New("operation cancelled by user")
+		}
+		return f.deleteColumnAllUsers(ctx, bulkWriter)
+	}
+
+	return f.deleteColumnSingleUser(ctx, bulkWriter)
+}
+
+func (f *Command) deleteColumnSingleUser(ctx context.Context, bulkWriter *firestore.BulkWriter) error {
 	docs, err := f.fs.Collection("memory").Doc(f.UID).Collection("conversations").Documents(ctx).GetAll()
 	if err != nil {
 		return fmt.Errorf("error getting memory docs: %w", err)
@@ -312,6 +364,36 @@ func (f *Command) deleteColumn(ctx context.Context) error {
 		})
 		if err != nil {
 			return fmt.Errorf("error updating document %s: %w", doc.Ref.ID, err)
+		}
+	}
+	return nil
+}
+
+func (f *Command) deleteColumnAllUsers(ctx context.Context, bulkWriter *firestore.BulkWriter) error {
+	memoryRef := f.fs.Collection("memory")
+	userDocs, err := memoryRef.DocumentRefs(ctx).GetAll()
+	if err != nil {
+		return fmt.Errorf("error getting all user memory docs: %w", err)
+	}
+	slog.Info("Found users to process", "count", len(userDocs))
+	for _, userDoc := range userDocs {
+		userID := userDoc.ID
+		if slices.Contains(f.Mem.SkipUserIDs, userID) {
+			slog.Info("Skipping userID", "userID", userID)
+			continue
+		}
+		docs, err := memoryRef.Doc(userID).Collection("conversations").Documents(ctx).GetAll()
+		if err != nil {
+			return fmt.Errorf("error getting conversations for user %s: %w", userID, err)
+		}
+		slog.Info("Processing user conversations", "userID", userID, "count", len(docs))
+		for _, doc := range docs {
+			_, err := bulkWriter.Update(doc.Ref, []firestore.Update{
+				{Path: f.Mem.DeleteColumn, Value: firestore.Delete},
+			})
+			if err != nil {
+				return fmt.Errorf("error updating document %s for user %s: %w", doc.Ref.ID, userID, err)
+			}
 		}
 	}
 	return nil

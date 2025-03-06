@@ -69,8 +69,10 @@ alias cpr := create-patch-release
 
 # Run 0.11 migration on single user
 @migrate-11-single EMAIL:
-    just db firebase mem delcol -email {{EMAIL}} -col embedding
-    just db -env prod firebase mem embed -email {{EMAIL}} -fields prompt,embedding_prompt_5,response,embedding_response_5 -model-version 5
+    just db -log debug firebase mem delcol -email {{EMAIL}} -col embedding
+    just db -env prod -log debug firebase mem embed -email {{EMAIL}} -fields prompt,embedding_prompt_5,response,embedding_response_5 -model-version 5
 
+# Run 0.11 migration on all users
 @migrate-11-all:
+    just db -env prod firebase mem delcol -all-users -col embedding
     just db -env prod firebase mem embed -all-users -fields prompt,embedding_prompt_5,response,embedding_response_5 -model-version 5
