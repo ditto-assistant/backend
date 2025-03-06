@@ -39,8 +39,19 @@ push-new-version part="patch" dry-run="false":
     # Get the latest tag from GitHub
     LATEST_TAG=$(git describe --tags `git rev-list --tags --max-count=1`)
     
-    # Extract major, minor, patch from tag (assuming format like v1.2.3)
-    IFS='.' read -r MAJOR MINOR PATCH <<< "${LATEST_TAG#v}"
+    # Check if the tag follows the expected format v{major}.{minor}.{patch}
+    if [[ ! $LATEST_TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "Warning: Latest tag '$LATEST_TAG' doesn't match expected format v{major}.{minor}.{patch}"
+        echo "Using v0.0.0 as base version"
+        MAJOR=0
+        MINOR=0
+        PATCH=0
+    else
+        # Extract major, minor, patch from tag
+        IFS='.' read -r VMAJOR MINOR PATCH <<< "$LATEST_TAG"
+        # Remove 'v' prefix from major part
+        MAJOR=${VMAJOR#v}
+    fi
     
     # Increment appropriate version part based on parameter
     if [[ "{{part}}" == "major" ]]; then
@@ -99,6 +110,15 @@ alias cmr := create-major-release
 # create a new minor release with auto-generated release notes
 create-minor-release: push-new-minor-tag gh-release
 alias cnr := create-minor-release
+
+# create a release with a custom tag
+create-release TAG:
+    #!/bin/sh
+    # Create and push the tag
+    git tag -a {{TAG}} -m "Release {{TAG}}"
+    git push origin {{TAG}}
+    # Create the GitHub release
+    gh release create {{TAG}} --generate-notes
 
 # Run 0.11 migration on single user
 @migrate-11-single EMAIL:
