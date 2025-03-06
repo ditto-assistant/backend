@@ -1,6 +1,6 @@
 {
   "name": "Image Generation",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Examples of user prompts that require the Image Generation tool.",
   "service_name": "dall-e-3",
   "examples": [
@@ -63,6 +63,66 @@
     {
       "prompt": "Draw a smiley face in a field of flowers.",
       "response": "<IMAGE_GENERATION> Draw a smiley face in a field of flowers. Include a happy face, colorful flowers, and a sunny day."
+    },
+    {
+      "prompt": "Can you create an image of a steampunk airship?",
+      "response": "<IMAGE_GENERATION> Create an image of a steampunk airship. Include brass and copper elements, gears, steam engines, and a Victorian aesthetic. The airship should be floating in a cloudy sky with a sunset in the background."
+    },
+    {
+      "prompt": "Generate an underwater scene with bioluminescent creatures.",
+      "response": "<IMAGE_GENERATION> Generate an underwater scene with bioluminescent creatures. Include glowing jellyfish, luminous fish, and shimmering coral in the deep dark ocean. Create an ethereal atmosphere with blue and turquoise lighting."
+    },
+    {
+      "prompt": "Can you make an image of a cozy cabin in winter?",
+      "response": "<IMAGE_GENERATION> Make an image of a cozy cabin in winter. Include snow-covered roof, smoke coming from a chimney, warm lights glowing from windows, pine trees around it, and a clear starry night."
+    },
+    {
+      "prompt": "Create a cyberpunk street scene in Tokyo.",
+      "response": "<IMAGE_GENERATION> Create a cyberpunk street scene in Tokyo. Include neon signs in Japanese characters, holographic advertisements, rain-slicked streets reflecting colorful lights, futuristic vehicles, and people with cybernetic enhancements."
+    },
+    {
+      "prompt": "Draw a fantasy map of an imaginary kingdom.",
+      "response": "<IMAGE_GENERATION> Draw a fantasy map of an imaginary kingdom. Include mountain ranges, forests, rivers, castles, villages, a sea with sea monsters, and decorative elements like a compass rose. Style it like an aged parchment with ornate borders."
+    },
+    {
+      "prompt": "Generate an image of a witch's potion brewery.",
+      "response": "<IMAGE_GENERATION> Generate an image of a witch's potion brewery. Include bubbling cauldrons, shelves of magical ingredients, spell books, a black cat, hanging herbs, magical artifacts, and atmospheric lighting with colorful vapors rising from potions."
+    },
+    {
+      "prompt": "Can you create an image of a space colony on Mars?",
+      "response": "<IMAGE_GENERATION> Create an image of a space colony on Mars. Include transparent domes housing greenery and buildings, the red Martian landscape outside, astronauts, rovers, solar panels, and the distant sun in a dusty pink sky."
+    },
+    {
+      "prompt": "Make an art nouveau style portrait of a peacock.",
+      "response": "<IMAGE_GENERATION> Make an art nouveau style portrait of a peacock. Include the characteristic flowing curved lines of art nouveau, ornate decorative elements, rich colors with gold accents, and stylized feathers in the distinctive art nouveau aesthetic."
+    },
+    {
+      "prompt": "Draw a pixel art scene of a medieval village.",
+      "response": "<IMAGE_GENERATION> Draw a pixel art scene of a medieval village. Include pixelated houses with thatched roofs, a castle in the background, pixel characters like villagers and knights, animals, and distinctive pixel art style with limited color palette."
+    },
+    {
+      "prompt": "Create an image in the style of Van Gogh's Starry Night but with a modern city.",
+      "response": "<IMAGE_GENERATION> Create an image in the style of Van Gogh's Starry Night but with a modern city. Include swirling sky patterns, bold brush strokes, vibrant blues and yellows, but replace the village with modern skyscrapers and city lights that follow the same swirling pattern."
+    },
+    {
+      "prompt": "Generate an image of a fantastical tree house city.",
+      "response": "<IMAGE_GENERATION> Generate an image of a fantastical tree house city. Include massive trees supporting wooden structures connected by bridges, spiral staircases wrapping around trunks, glowing lanterns, waterfalls, and inhabitants living harmoniously with nature."
+    },
+    {
+      "prompt": "Can you draw a surrealist painting combining a clock and a butterfly?",
+      "response": "<IMAGE_GENERATION> Draw a surrealist painting combining a clock and a butterfly. Include melting clock faces forming butterfly wings, dreamlike imagery, impossible perspectives, vibrant colors against a strange landscape, in the style of Salvador Dali."
+    },
+    {
+      "prompt": "Create an image of ancient Egyptian gods in a modern setting.",
+      "response": "<IMAGE_GENERATION> Create an image of ancient Egyptian gods in a modern setting. Include Anubis, Ra, Bastet, and Horus wearing contemporary clothing but with their traditional animal heads, using modern technology while maintaining Egyptian symbolic elements in a urban cityscape."
+    },
+    {
+      "prompt": "Generate a vintage travel poster for an alien planet.",
+      "response": "<IMAGE_GENERATION> Generate a vintage travel poster for an alien planet. Include retro typography saying 'Visit Planet X', mid-century modern design aesthetics, illustration of alien landscapes with unusual colors, multiple moons in the sky, and strange vegetation in a style reminiscent of 1950s travel advertisements."
+    },
+    {
+      "prompt": "Draw a realistic image of a robot chef cooking in a kitchen.",
+      "response": "<IMAGE_GENERATION> Draw a realistic image of a robot chef cooking in a kitchen. Include detailed mechanical parts, multiple arms chopping vegetables and stirring pots simultaneously, a digital display showing recipes, a modern kitchen environment, and steam rising from the cooking food."
     }
   ]
 }
