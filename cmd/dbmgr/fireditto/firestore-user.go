@@ -203,7 +203,7 @@ func (f *Command) processUserConversations(
 	return f.embedBatch(ctx, docs, model, bulkWriter, logger)
 }
 
-const batchSize = 50
+const batchSize = 25
 
 // EmbeddingItem tracks an individual content item to be embedded
 type EmbeddingItem struct {
