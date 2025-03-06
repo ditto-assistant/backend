@@ -446,7 +446,7 @@ func (te ToolExamples) Embed(ctx context.Context, client *googai.Client) error {
 		var promptEmbeddings googai.EmbedResponse
 		req := &googai.EmbedRequest{
 			Documents: promptDocs,
-			Model:     llm.ModelTextEmbedding004,
+			Model:     llm.ModelTextEmbedding005,
 		}
 		err := client.Embed(ctx, req, &promptEmbeddings)
 		if err != nil {
