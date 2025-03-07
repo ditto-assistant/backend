@@ -3,7 +3,7 @@ module github.com/ditto-assistant/backend
 go 1.24
 
 require (
-	cloud.google.com/go/aiplatform v1.74.0
+	cloud.google.com/go/aiplatform v1.75.0
 	cloud.google.com/go/firestore v1.18.0
 	firebase.google.com/go/v4 v4.15.2
 	github.com/aws/aws-sdk-go v1.55.6
