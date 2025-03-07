@@ -92,10 +92,6 @@ func (mem *Memory) FormatResponse() {
 	FormatToolsResponse(&mem.Response)
 }
 
-func (mem *Memory) FormatResponse() {
-	FormatToolsResponse(&mem.Response)
-}
-
 func (mem *Memory) StripImages() {
 	TrimStuff(&mem.Prompt, "![image](", ")", nil)
 	TrimStuff(&mem.Response, "![DittoImage](", ")", nil)
