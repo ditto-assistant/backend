@@ -85,16 +85,11 @@ func FormatToolsResponse(response *string) {
 		if len(parts) > 1 {
 			*response = "<GOOGLE_SEARCH>" + parts[1]
 		}
-	case strings.Contains(*response, "Home Assistant Task:"):
-		parts := strings.Split(*response, "Home Assistant Task:")
-		if len(parts) > 1 {
-			cleaned := strings.TrimSpace(strings.ReplaceAll(
-				strings.ReplaceAll(parts[1], "Task completed successfully.", ""),
-				"Task failed.", "",
-			))
-			*response = "<GOOGLE_HOME> " + cleaned
-		}
 	}
+}
+
+func (mem *Memory) FormatResponse() {
+	FormatToolsResponse(&mem.Response)
 }
 
 func (mem *Memory) FormatResponse() {
