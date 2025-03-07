@@ -5,7 +5,7 @@ go 1.24
 require (
 	cloud.google.com/go/aiplatform v1.74.0
 	cloud.google.com/go/firestore v1.18.0
-	firebase.google.com/go/v4 v4.15.1
+	firebase.google.com/go/v4 v4.15.2
 	github.com/aws/aws-sdk-go v1.55.6
 	github.com/omniaura/mapcache v0.1.1
 	github.com/rs/cors v1.11.1
