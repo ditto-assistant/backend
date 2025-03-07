@@ -185,7 +185,7 @@ func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if bod.DummyMode {
-		fmt.Fprintln(w, envs.DALLE_E_DUMMY_LINK)
+		fmt.Fprint(w, envs.DALLE_E_DUMMY_LINK)
 		return
 	}
 	url, err := s.dalle.Prompt(ctx, &bod)
@@ -194,7 +194,7 @@ func (s *Service) GenerateImage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	fmt.Fprintln(w, url)
+	fmt.Fprint(w, url)
 
 	s.sd.Run(func(ctx context.Context) {
 		slog.Debug("image receipt", "url", url)
@@ -298,7 +298,7 @@ func (s *Service) PresignURL(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	fmt.Fprintln(w, url)
+	fmt.Fprint(w, url)
 }
 
 // - MARK: create-upload-url
@@ -331,7 +331,7 @@ func (s *Service) CreateUploadURL(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	fmt.Fprintln(w, url)
+	fmt.Fprint(w, url)
 }
 
 // - MARK: get-memories

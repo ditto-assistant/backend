@@ -156,6 +156,7 @@ func TrimStuff(s *string, prefix, suffix string, replaceFunc func(*string) error
 			result = result[:resultIdx] + result[resultIdx+len(prefix)+len(afterPrefix[:closeIdx])+len(suffix):]
 		} else {
 			url := afterPrefix[:closeIdx]
+			url = strings.TrimSuffix(url, "\n") // Trim any trailing newlines that might have been added
 			err := replaceFunc(&url)
 			if err != nil {
 				return err
