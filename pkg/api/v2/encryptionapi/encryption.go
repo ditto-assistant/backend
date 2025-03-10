@@ -1,4 +1,4 @@
-package encryption
+package encryptionapi
 
 import (
 	"encoding/json"
@@ -15,12 +15,12 @@ import (
 
 // Service handles encryption API endpoints
 type Service struct {
-	EncryptionService *encryption.Service
+	EncryptionService *encryption.Client
 	MemoriesService   *firestoremem.Client
 }
 
 // NewService creates a new encryption API service
-func NewService(encSvc *encryption.Service, memSvc *firestoremem.Client) *Service {
+func NewService(encSvc *encryption.Client, memSvc *firestoremem.Client) *Service {
 	return &Service{
 		EncryptionService: encSvc,
 		MemoriesService:   memSvc,

@@ -30,21 +30,21 @@ type Key struct {
 	PasskeyName         string
 }
 
-// Service provides encryption key management functionality
-type Service struct {
+// Client provides encryption key management functionality
+type Client struct {
 	DB *sql.DB
 }
 
-// NewService creates a new encryption service
-func NewService(db *sql.DB) *Service {
-	return &Service{
+// NewClient creates a new encryption service
+func NewClient(db *sql.DB) *Client {
+	return &Client{
 		DB: db,
 	}
 }
 
 // RegisterKey stores a new encryption key for a user
 // This version supports both regular keys and passkey-derived keys
-func (s *Service) RegisterKey(
+func (s *Client) RegisterKey(
 	ctx context.Context,
 	userUID,
 	keyID,
@@ -128,7 +128,7 @@ func (s *Service) RegisterKey(
 }
 
 // GetKey retrieves an encryption key for a user
-func (s *Service) GetKey(ctx context.Context, userID int64, keyID string) (Key, error) {
+func (s *Client) GetKey(ctx context.Context, userID int64, keyID string) (Key, error) {
 	var key Key
 
 	// Initialize null-able fields with pointers
@@ -193,7 +193,7 @@ func (s *Service) GetKey(ctx context.Context, userID int64, keyID string) (Key, 
 }
 
 // UpdateKeyLastUsed updates the last used timestamp for a key
-func (s *Service) UpdateKeyLastUsed(ctx context.Context, userID int64, keyID string) error {
+func (s *Client) UpdateKeyLastUsed(ctx context.Context, userID int64, keyID string) error {
 	_, err := s.DB.ExecContext(ctx,
 		"UPDATE encryption_keys SET last_used_at = CURRENT_TIMESTAMP WHERE user_id = ? AND key_id = ?",
 		userID, keyID)
@@ -205,7 +205,7 @@ func (s *Service) UpdateKeyLastUsed(ctx context.Context, userID int64, keyID str
 
 // RotateKey creates a new version of an encryption key
 // Also supports passkey-derived keys
-func (s *Service) RotateKey(
+func (s *Client) RotateKey(
 	ctx context.Context,
 	userUID,
 	keyID,
@@ -288,7 +288,7 @@ func (s *Service) RotateKey(
 }
 
 // ListKeys returns all active encryption keys for a user
-func (s *Service) ListKeys(ctx context.Context, userUID string) ([]Key, error) {
+func (s *Client) ListKeys(ctx context.Context, userUID string) ([]Key, error) {
 	// Get user
 	user := users.User{UID: userUID}
 	if err := user.GetByUID(ctx, s.DB); err != nil {
@@ -365,7 +365,7 @@ func (s *Service) ListKeys(ctx context.Context, userUID string) ([]Key, error) {
 }
 
 // DeactivateKey marks a key as inactive
-func (s *Service) DeactivateKey(ctx context.Context, userUID, keyID string) error {
+func (s *Client) DeactivateKey(ctx context.Context, userUID, keyID string) error {
 	// Get user
 	user := users.User{UID: userUID}
 	if err := user.GetByUID(ctx, s.DB); err != nil {

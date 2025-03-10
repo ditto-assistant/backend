@@ -55,13 +55,13 @@ type Service struct {
 	searchClient      *search.Client
 	urlCache          *mapcache.MapCache[string, string]
 	dalle             *dalle.Client
-	encryptionService *encryption.Service
+	encryptionService *encryption.Client
 }
 
 type ServiceClients struct {
 	SearchClient      *search.Client
 	Dalle             *dalle.Client
-	EncryptionService *encryption.Service
+	EncryptionService *encryption.Client
 }
 
 func NewService(sd ty.ShutdownContext, sc *core.Client, setup ServiceClients) *Service {

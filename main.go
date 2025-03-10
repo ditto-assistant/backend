@@ -16,6 +16,7 @@ import (
 	"github.com/ditto-assistant/backend/cfg/secr"
 	apiv1 "github.com/ditto-assistant/backend/pkg/api/v1"
 	apiv2 "github.com/ditto-assistant/backend/pkg/api/v2"
+	"github.com/ditto-assistant/backend/pkg/api/v2/encryptionapi"
 	"github.com/ditto-assistant/backend/pkg/api/v2/passkeys"
 	"github.com/ditto-assistant/backend/pkg/core"
 	"github.com/ditto-assistant/backend/pkg/middleware"
@@ -61,13 +62,14 @@ func main() {
 
 	mux := http.NewServeMux()
 	// Initialize encryption service
-	encryptionService := encryption.NewService(db.D)
+	encryptionService := encryption.NewClient(db.D)
 	webAuthnService, err := webauthn.NewService(bgCtx, db.D)
 	if err != nil {
 		log.Fatalf("failed to initialize webauthn service: %s", err)
 	}
-	passkeysService := passkeys.NewWebAuthnHandlers(webAuthnService, encryptionService)
+	passkeysService := passkeys.NewService(webAuthnService, encryptionService)
 	passkeysService.Routes(mux)
+	encryptionapi.NewService(encryptionService, coreSvc.Memories).Routes(mux)
 	authMiddleware := middleware.NewAuth(coreSvc.Auth)
 
 	searchClient := search.NewClient(

@@ -19,7 +19,7 @@ import (
 )
 
 // SetupWebAuthnRoutes sets up the WebAuthn API routes
-func (cl *WebAuthnHandlers) Routes(router *http.ServeMux) {
+func (cl *Service) Routes(router *http.ServeMux) {
 	passkeysRouter := http.NewServeMux()
 	passkeysRouter.HandleFunc("POST /action/registration/challenge", cl.GenerateRegistrationChallenge)
 	passkeysRouter.HandleFunc("POST /action/register", cl.RegisterPasskey)
@@ -30,26 +30,26 @@ func (cl *WebAuthnHandlers) Routes(router *http.ServeMux) {
 	router.Handle("/api/v2/passkeys/", handler)
 }
 
-// WebAuthnHandlers contains handlers for WebAuthn registration and authentication
-type WebAuthnHandlers struct {
-	WebAuthnService   *webauthn.Service
-	EncryptionService *encryption.Service
+// Service contains handlers for WebAuthn registration and authentication
+type Service struct {
+	WebAuthn   *webauthn.Service
+	Encryption *encryption.Client
 }
 
-// NewWebAuthnHandlers creates a new instance of WebAuthnHandlers
-func NewWebAuthnHandlers(webAuthnService *webauthn.Service, encryptionService *encryption.Service) *WebAuthnHandlers {
-	return &WebAuthnHandlers{
-		WebAuthnService:   webAuthnService,
-		EncryptionService: encryptionService,
+// NewService creates a new instance of WebAuthnHandlers
+func NewService(webAuthnService *webauthn.Service, encryptionService *encryption.Client) *Service {
+	return &Service{
+		WebAuthn:   webAuthnService,
+		Encryption: encryptionService,
 	}
 }
 
 // MARK: - GenerateRegistrationChallenge
 
-func (h *WebAuthnHandlers) GenerateRegistrationChallenge(w http.ResponseWriter, r *http.Request) {
+func (h *Service) GenerateRegistrationChallenge(w http.ResponseWriter, r *http.Request) {
 	uid := middleware.GetUserID(r.Context())
 	user := users.User{UID: uid}
-	if err := user.GetByUID(r.Context(), h.WebAuthnService.DB); err != nil {
+	if err := user.GetByUID(r.Context(), h.WebAuthn.DB); err != nil {
 		http.Error(w, fmt.Sprintf("Error retrieving user: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -74,7 +74,7 @@ func (h *WebAuthnHandlers) GenerateRegistrationChallenge(w http.ResponseWriter, 
 	}
 
 	// Generate registration options
-	options, sessionData, err := h.WebAuthnService.WebAuthn.BeginRegistration(webAuthnUser)
+	options, sessionData, err := h.WebAuthn.WebAuthn.BeginRegistration(webAuthnUser)
 	if err != nil {
 		slog.Error("Error generating registration options", "error", err)
 		http.Error(w, "Failed to generate registration challenge", http.StatusInternalServerError)
@@ -82,11 +82,11 @@ func (h *WebAuthnHandlers) GenerateRegistrationChallenge(w http.ResponseWriter, 
 	}
 
 	// Store session data in database
-	challengeID, err := h.WebAuthnService.SaveChallengeToDB(
+	challengeID, err := h.WebAuthn.SaveChallengeToDB(
 		r.Context(),
 		user.ID,
 		sessionData.Challenge,
-		h.WebAuthnService.WebAuthn.Config.RPID,
+		h.WebAuthn.WebAuthn.Config.RPID,
 		"registration",
 	)
 	if err != nil {
@@ -99,8 +99,8 @@ func (h *WebAuthnHandlers) GenerateRegistrationChallenge(w http.ResponseWriter, 
 	response := rp.WebAuthnChallenge{
 		ChallengeID:      challengeID,
 		Challenge:        sessionData.Challenge,
-		RPID:             h.WebAuthnService.WebAuthn.Config.RPID,
-		RPName:           h.WebAuthnService.WebAuthn.Config.RPDisplayName,
+		RPID:             h.WebAuthn.WebAuthn.Config.RPID,
+		RPName:           h.WebAuthn.WebAuthn.Config.RPDisplayName,
 		UserVerification: string(options.Response.AuthenticatorSelection.UserVerification),
 		Timeout:          options.Response.Timeout,
 	}
@@ -110,10 +110,10 @@ func (h *WebAuthnHandlers) GenerateRegistrationChallenge(w http.ResponseWriter, 
 
 // MARK: - RegisterPasskey
 
-func (h *WebAuthnHandlers) RegisterPasskey(w http.ResponseWriter, r *http.Request) {
+func (h *Service) RegisterPasskey(w http.ResponseWriter, r *http.Request) {
 	uid := middleware.GetUserID(r.Context())
 	user := users.User{UID: uid}
-	if err := user.GetByUID(r.Context(), h.WebAuthnService.DB); err != nil {
+	if err := user.GetByUID(r.Context(), h.WebAuthn.DB); err != nil {
 		http.Error(w, fmt.Sprintf("Error retrieving user: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -125,7 +125,7 @@ func (h *WebAuthnHandlers) RegisterPasskey(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	passkeyName := query.Get("passkeyName")
-	challenge, err := h.WebAuthnService.GetChallengeFromDB(r.Context(), challengeID)
+	challenge, err := h.WebAuthn.GetChallengeFromDB(r.Context(), challengeID)
 	if err != nil {
 		slog.Error("Error retrieving challenge", "error", err)
 		http.Error(w, "Invalid or expired challenge", http.StatusBadRequest)
@@ -143,11 +143,11 @@ func (h *WebAuthnHandlers) RegisterPasskey(w http.ResponseWriter, r *http.Reques
 		Challenge:        challenge,
 		UserID:           []byte(uid),
 		UserVerification: protocol.VerificationPreferred,
-		RelyingPartyID:   h.WebAuthnService.WebAuthn.Config.RPID,
+		RelyingPartyID:   h.WebAuthn.WebAuthn.Config.RPID,
 	}
 
 	// Verify registration
-	credential, err := h.WebAuthnService.WebAuthn.FinishRegistration(webAuthnUser, sessionData, r)
+	credential, err := h.WebAuthn.WebAuthn.FinishRegistration(webAuthnUser, sessionData, r)
 	if err != nil {
 		slog.Error("Error verifying registration", "error", err)
 		http.Error(w, fmt.Sprintf("Registration verification failed: %v", err), http.StatusBadRequest)
@@ -162,13 +162,13 @@ func (h *WebAuthnHandlers) RegisterPasskey(w http.ResponseWriter, r *http.Reques
 	credentialPublicKey := base64.StdEncoding.EncodeToString(credential.PublicKey)
 
 	// Register the key with encryption service
-	err = h.EncryptionService.RegisterKey(
+	err = h.Encryption.RegisterKey(
 		r.Context(),
 		uid,
 		keyID,
 		credentialPublicKey, // This is used as the encryption key
 		credentialID,        // Store the credential ID
-		h.WebAuthnService.WebAuthn.Config.RPID,
+		h.WebAuthn.WebAuthn.Config.RPID,
 		"passkey-derived", // Key derivation method
 		passkeyName,       // User-friendly name
 	)
@@ -180,7 +180,7 @@ func (h *WebAuthnHandlers) RegisterPasskey(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Clean up the challenge
-	if err := h.WebAuthnService.DeleteChallengeFromDB(r.Context(), challengeID); err != nil {
+	if err := h.WebAuthn.DeleteChallengeFromDB(r.Context(), challengeID); err != nil {
 		slog.Warn("Failed to delete challenge from database", "error", err)
 		// Continue anyway - this is just cleanup
 	}
@@ -196,10 +196,10 @@ func (h *WebAuthnHandlers) RegisterPasskey(w http.ResponseWriter, r *http.Reques
 
 // MARK: - GenerateAuthenticationChallenge
 
-func (h *WebAuthnHandlers) GenerateAuthenticationChallenge(w http.ResponseWriter, r *http.Request) {
+func (h *Service) GenerateAuthenticationChallenge(w http.ResponseWriter, r *http.Request) {
 	uid := middleware.GetUserID(r.Context())
 	user := users.User{UID: uid}
-	if err := user.GetByUID(r.Context(), h.WebAuthnService.DB); err != nil {
+	if err := user.GetByUID(r.Context(), h.WebAuthn.DB); err != nil {
 		http.Error(w, fmt.Sprintf("Error retrieving user: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -212,14 +212,14 @@ func (h *WebAuthnHandlers) GenerateAuthenticationChallenge(w http.ResponseWriter
 	}
 
 	// Get WebAuthn user with credentials
-	webAuthnUser, err := h.WebAuthnService.GetUserByID(r.Context(), user.ID)
+	webAuthnUser, err := h.WebAuthn.GetUserByID(r.Context(), user.ID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error retrieving user credentials: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	// Generate authentication options
-	options, sessionData, err := h.WebAuthnService.WebAuthn.BeginLogin(webAuthnUser)
+	options, sessionData, err := h.WebAuthn.WebAuthn.BeginLogin(webAuthnUser)
 	if err != nil {
 		slog.Error("Error generating authentication options", "error", err)
 		http.Error(w, "Failed to generate authentication challenge", http.StatusInternalServerError)
@@ -227,11 +227,11 @@ func (h *WebAuthnHandlers) GenerateAuthenticationChallenge(w http.ResponseWriter
 	}
 
 	// Store session data in database
-	challengeID, err := h.WebAuthnService.SaveChallengeToDB(
+	challengeID, err := h.WebAuthn.SaveChallengeToDB(
 		r.Context(),
 		user.ID,
 		sessionData.Challenge,
-		h.WebAuthnService.WebAuthn.Config.RPID,
+		h.WebAuthn.WebAuthn.Config.RPID,
 		"authentication",
 	)
 	if err != nil {
@@ -249,8 +249,8 @@ func (h *WebAuthnHandlers) GenerateAuthenticationChallenge(w http.ResponseWriter
 	response := rp.WebAuthnChallenge{
 		ChallengeID:      challengeID,
 		Challenge:        sessionData.Challenge,
-		RPID:             h.WebAuthnService.WebAuthn.Config.RPID,
-		RPName:           h.WebAuthnService.WebAuthn.Config.RPDisplayName,
+		RPID:             h.WebAuthn.WebAuthn.Config.RPID,
+		RPName:           h.WebAuthn.WebAuthn.Config.RPDisplayName,
 		UserVerification: string(options.Response.UserVerification),
 		Timeout:          options.Response.Timeout,
 		AllowCredentials: allowCredentials,
@@ -261,10 +261,10 @@ func (h *WebAuthnHandlers) GenerateAuthenticationChallenge(w http.ResponseWriter
 
 // MARK: - AuthenticatePasskey
 
-func (h *WebAuthnHandlers) AuthenticatePasskey(w http.ResponseWriter, r *http.Request) {
+func (h *Service) AuthenticatePasskey(w http.ResponseWriter, r *http.Request) {
 	uid := middleware.GetUserID(r.Context())
 	user := users.User{UID: uid}
-	if err := user.GetByUID(r.Context(), h.WebAuthnService.DB); err != nil {
+	if err := user.GetByUID(r.Context(), h.WebAuthn.DB); err != nil {
 		http.Error(w, fmt.Sprintf("Error retrieving user: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -276,7 +276,7 @@ func (h *WebAuthnHandlers) AuthenticatePasskey(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	challenge, err := h.WebAuthnService.GetChallengeFromDB(r.Context(), challengeID)
+	challenge, err := h.WebAuthn.GetChallengeFromDB(r.Context(), challengeID)
 	if err != nil {
 		slog.Error("Error retrieving challenge", "error", err)
 		http.Error(w, "Invalid or expired challenge", http.StatusBadRequest)
@@ -284,7 +284,7 @@ func (h *WebAuthnHandlers) AuthenticatePasskey(w http.ResponseWriter, r *http.Re
 	}
 
 	// Get WebAuthn user with credentials
-	webAuthnUser, err := h.WebAuthnService.GetUserByID(r.Context(), user.ID)
+	webAuthnUser, err := h.WebAuthn.GetUserByID(r.Context(), user.ID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Error retrieving user credentials: %v", err), http.StatusInternalServerError)
 		return
@@ -295,11 +295,11 @@ func (h *WebAuthnHandlers) AuthenticatePasskey(w http.ResponseWriter, r *http.Re
 		Challenge:        challenge,
 		UserID:           []byte(uid),
 		UserVerification: protocol.VerificationPreferred,
-		RelyingPartyID:   h.WebAuthnService.WebAuthn.Config.RPID,
+		RelyingPartyID:   h.WebAuthn.WebAuthn.Config.RPID,
 	}
 
 	// Verify authentication
-	credential, err := h.WebAuthnService.WebAuthn.FinishLogin(webAuthnUser, sessionData, r)
+	credential, err := h.WebAuthn.WebAuthn.FinishLogin(webAuthnUser, sessionData, r)
 	if err != nil {
 		slog.Error("Error verifying authentication", "error", err)
 		http.Error(w, fmt.Sprintf("Authentication verification failed: %v", err), http.StatusBadRequest)
@@ -308,13 +308,13 @@ func (h *WebAuthnHandlers) AuthenticatePasskey(w http.ResponseWriter, r *http.Re
 
 	// Authentication successful - update last used timestamp for the key
 	keyID := fmt.Sprintf("passkey-%s", base64.StdEncoding.EncodeToString(credential.ID))
-	if err := h.EncryptionService.UpdateKeyLastUsed(r.Context(), user.ID, keyID); err != nil {
+	if err := h.Encryption.UpdateKeyLastUsed(r.Context(), user.ID, keyID); err != nil {
 		slog.Warn("Failed to update key last used timestamp", "error", err)
 		// Continue anyway - this is just a timestamp update
 	}
 
 	// Clean up the challenge
-	if err := h.WebAuthnService.DeleteChallengeFromDB(r.Context(), challengeID); err != nil {
+	if err := h.WebAuthn.DeleteChallengeFromDB(r.Context(), challengeID); err != nil {
 		slog.Warn("Failed to delete challenge from database", "error", err)
 		// Continue anyway - this is just cleanup
 	}
@@ -329,7 +329,7 @@ func (h *WebAuthnHandlers) AuthenticatePasskey(w http.ResponseWriter, r *http.Re
 
 // MARK: - ListPasskeys
 
-func (h *WebAuthnHandlers) ListPasskeys(w http.ResponseWriter, r *http.Request) {
+func (h *Service) ListPasskeys(w http.ResponseWriter, r *http.Request) {
 	// Get the user ID from context (set by middleware)
 	uid := middleware.GetUserID(r.Context())
 	if uid == "" {
@@ -338,7 +338,7 @@ func (h *WebAuthnHandlers) ListPasskeys(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Get encryption keys from database
-	keys, err := h.EncryptionService.ListKeys(r.Context(), uid)
+	keys, err := h.Encryption.ListKeys(r.Context(), uid)
 	if err != nil {
 		slog.Error("Error listing encryption keys", "error", err)
 		http.Error(w, "Failed to list passkeys", http.StatusInternalServerError)
