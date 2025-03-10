@@ -47,7 +47,7 @@ func NewWebAuthnHandlers(webAuthnService *webauthn.Service, encryptionService *e
 // MARK: - GenerateRegistrationChallenge
 
 func (h *WebAuthnHandlers) GenerateRegistrationChallenge(w http.ResponseWriter, r *http.Request) {
-	uid := middleware.GetUserIDFromContext(r.Context())
+	uid := middleware.GetUserID(r.Context())
 	user := users.User{UID: uid}
 	if err := user.GetByUID(r.Context(), h.WebAuthnService.DB); err != nil {
 		http.Error(w, fmt.Sprintf("Error retrieving user: %v", err), http.StatusInternalServerError)
@@ -111,7 +111,7 @@ func (h *WebAuthnHandlers) GenerateRegistrationChallenge(w http.ResponseWriter, 
 // MARK: - RegisterPasskey
 
 func (h *WebAuthnHandlers) RegisterPasskey(w http.ResponseWriter, r *http.Request) {
-	uid := middleware.GetUserIDFromContext(r.Context())
+	uid := middleware.GetUserID(r.Context())
 	user := users.User{UID: uid}
 	if err := user.GetByUID(r.Context(), h.WebAuthnService.DB); err != nil {
 		http.Error(w, fmt.Sprintf("Error retrieving user: %v", err), http.StatusInternalServerError)
@@ -197,7 +197,7 @@ func (h *WebAuthnHandlers) RegisterPasskey(w http.ResponseWriter, r *http.Reques
 // MARK: - GenerateAuthenticationChallenge
 
 func (h *WebAuthnHandlers) GenerateAuthenticationChallenge(w http.ResponseWriter, r *http.Request) {
-	uid := middleware.GetUserIDFromContext(r.Context())
+	uid := middleware.GetUserID(r.Context())
 	user := users.User{UID: uid}
 	if err := user.GetByUID(r.Context(), h.WebAuthnService.DB); err != nil {
 		http.Error(w, fmt.Sprintf("Error retrieving user: %v", err), http.StatusInternalServerError)
@@ -262,7 +262,7 @@ func (h *WebAuthnHandlers) GenerateAuthenticationChallenge(w http.ResponseWriter
 // MARK: - AuthenticatePasskey
 
 func (h *WebAuthnHandlers) AuthenticatePasskey(w http.ResponseWriter, r *http.Request) {
-	uid := middleware.GetUserIDFromContext(r.Context())
+	uid := middleware.GetUserID(r.Context())
 	user := users.User{UID: uid}
 	if err := user.GetByUID(r.Context(), h.WebAuthnService.DB); err != nil {
 		http.Error(w, fmt.Sprintf("Error retrieving user: %v", err), http.StatusInternalServerError)
@@ -331,7 +331,7 @@ func (h *WebAuthnHandlers) AuthenticatePasskey(w http.ResponseWriter, r *http.Re
 
 func (h *WebAuthnHandlers) ListPasskeys(w http.ResponseWriter, r *http.Request) {
 	// Get the user ID from context (set by middleware)
-	uid := middleware.GetUserIDFromContext(r.Context())
+	uid := middleware.GetUserID(r.Context())
 	if uid == "" {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return

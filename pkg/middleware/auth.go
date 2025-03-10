@@ -39,9 +39,9 @@ func (m *AuthMiddleware) Handler(next http.Handler) http.Handler {
 	})
 }
 
-// GetUserIDFromContext extracts the user ID from the context.
+// GetUserID extracts the user ID from the context.
 // It panics if the user ID is not found in the context.
-func GetUserIDFromContext(ctx context.Context) string {
+func GetUserID(ctx context.Context) string {
 	userID, ok := ctx.Value(contextKeyUserID).(string)
 	if !ok {
 		panic("user ID not found in context")

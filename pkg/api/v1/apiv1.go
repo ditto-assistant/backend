@@ -622,7 +622,7 @@ func (s *Service) CreatePrompt(w http.ResponseWriter, r *http.Request) {
 
 // createEncryptedPrompt handles the creation of an encrypted prompt
 func (s *Service) createEncryptedPrompt(w http.ResponseWriter, r *http.Request, tok *authfirebase.AuthToken) {
-	var encReq rq.CreateEncryptedPromptRequest
+	var encReq rq.CreateEncryptedPromptV1
 	if err := json.NewDecoder(r.Body).Decode(&encReq); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -769,7 +769,7 @@ func (s *Service) SaveResponse(w http.ResponseWriter, r *http.Request) {
 
 // saveEncryptedResponse handles saving an encrypted response
 func (s *Service) saveEncryptedResponse(w http.ResponseWriter, r *http.Request, slog *slog.Logger, tok *authfirebase.AuthToken) {
-	var encReq rq.SaveEncryptedResponseRequest
+	var encReq rq.SaveEncryptedResponseV1
 	if err := json.NewDecoder(r.Body).Decode(&encReq); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -882,62 +882,27 @@ func (s *Service) GetConversations(w http.ResponseWriter, r *http.Request) {
 	if cursorStr := q.Get("cursor"); cursorStr != "" {
 		cursor = cursorStr
 	}
-	memoriesRef := s.sc.Memories.ConversationsRef(userID)
-	query := memoriesRef.OrderBy("timestamp", firestore.Desc).Limit(limit + 1) // Get one extra to determine if there are more pages
 
-	if cursor != "" {
-		cursorDoc, err := memoriesRef.Doc(cursor).Get(r.Context())
-		if err != nil {
-			http.Error(w, "Invalid cursor", http.StatusBadRequest)
-			return
-		}
-		query = query.StartAfter(cursorDoc)
-	}
-	docs, err := query.Documents(r.Context()).GetAll()
+	// Get conversations with pagination
+	result, err := s.sc.Memories.GetConversations(r.Context(), userID, limit, cursor)
 	if err != nil {
 		slog.Error("failed to query conversations", "error", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	hasNextPage := len(docs) > limit
-	if hasNextPage {
-		docs = docs[:limit] // Remove the extra document we fetched
-	}
-
-	messages := make([]rp.Memory, 0, len(docs))
-	for _, doc := range docs {
-		var mem rp.Memory
-		if err := doc.DataTo(&mem); err != nil {
-			slog.Error("failed to unmarshal memory", "error", err)
-			continue
-		}
-		mem.ID = doc.Ref.ID
-		mem.FormatResponse()
-		if err := mem.PresignImages(r.Context(), userID, s.sc.FileStorage); err != nil {
+	// Presign images for each message
+	for i := range result.Messages {
+		if err := result.Messages[i].PresignImages(r.Context(), userID, s.sc.FileStorage); err != nil {
 			slog.Error("failed to presign images", "error", err)
 			continue
 		}
-		messages = append(messages, mem)
 	}
 
-	nextCursor := ""
-	if hasNextPage && len(messages) > 0 {
-		nextCursor = messages[len(messages)-1].ID
+	response := rp.GetConversationsV2{
+		Messages:   result.Messages,
+		NextCursor: result.NextCursor,
 	}
 
-	response := struct {
-		Messages   []rp.Memory `json:"messages"`
-		NextCursor string      `json:"nextCursor,omitempty"`
-	}{
-		Messages:   messages,
-		NextCursor: nextCursor,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		slog.Error("failed to encode response", "error", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	rp.RespondWithJSON(w, http.StatusOK, response)
 }

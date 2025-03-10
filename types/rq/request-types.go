@@ -176,8 +176,8 @@ type SaveResponseV1 struct {
 
 // Encryption Request Types
 
-// CreateEncryptedPromptRequest represents a request to create an encrypted prompt
-type CreateEncryptedPromptRequest struct {
+// CreateEncryptedPromptV1 represents a request to create an encrypted prompt
+type CreateEncryptedPromptV1 struct {
 	UserID            string `json:"userId,omitempty"` // Can be derived from auth context
 	EncryptedPrompt   string `json:"encryptedPrompt"`
 	UnencryptedPrompt string `json:"unencryptedPrompt"` // For embeddings only, not stored
@@ -187,8 +187,8 @@ type CreateEncryptedPromptRequest struct {
 	ConversationID    string `json:"conversationId,omitempty"`
 }
 
-// SaveEncryptedResponseRequest represents a request to save an encrypted response
-type SaveEncryptedResponseRequest struct {
+// SaveEncryptedResponseV1 represents a request to save an encrypted response
+type SaveEncryptedResponseV1 struct {
 	UserID              string    `json:"userId,omitempty"` // Can be derived from auth context
 	PromptID            string    `json:"promptId"`
 	EncryptedResponse   string    `json:"encryptedResponse"`
@@ -198,17 +198,16 @@ type SaveEncryptedResponseRequest struct {
 	ResponseTimestamp   time.Time `json:"responseTimestamp"`
 }
 
-// MigrateConversation represents a single conversation to be migrated to encryption
-type MigrateConversation struct {
-	ConversationID    string `json:"conversationId"`
+// EncryptedConversation represents a single conversation to be migrated to encryption
+type EncryptedConversation struct {
+	DocID             string `json:"docId"`
 	EncryptedPrompt   string `json:"encryptedPrompt"`
 	EncryptedResponse string `json:"encryptedResponse"`
 }
 
-// MigrateConversationsRequest represents a request to migrate a user's conversations to encrypted versions
-type MigrateConversationsRequest struct {
-	UserID            string                `json:"userId,omitempty"` // Can be derived from auth context
-	EncryptionKeyID   string                `json:"encryptionKeyId"`
-	EncryptionVersion int                   `json:"encryptionVersion"`
-	Conversations     []MigrateConversation `json:"conversations"`
+// MigrateConversationsV2 represents a request to migrate a user's conversations to encrypted versions
+type MigrateConversationsV2 struct {
+	EncryptionKeyID   string                  `json:"encryptionKeyId"`
+	EncryptionVersion int                     `json:"encryptionVersion"`
+	Conversations     []EncryptedConversation `json:"conversations"`
 }
