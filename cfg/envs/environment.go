@@ -32,6 +32,11 @@ var (
 	PRICE_ID_TOKENS_100B   string
 	PRICE_ID_TOKENS_150B   string
 	SEARCH_ENGINE_ID       string
+	
+	// WebAuthn configuration
+	WEBAUTHN_RPID          string // Relying Party ID
+	WEBAUTHN_ORIGIN        string // Relying Party Origin
+	WEBAUTHN_RP_NAME       string // Relying Party Display Name
 )
 
 type Env string
@@ -124,6 +129,11 @@ func Load() error {
 		{&PRICE_ID_TOKENS_100B, "PRICE_ID_TOKENS_100B"},
 		{&PRICE_ID_TOKENS_150B, "PRICE_ID_TOKENS_150B"},
 		{&SEARCH_ENGINE_ID, "SEARCH_ENGINE_ID"},
+		
+		// WebAuthn variables - these are optional with defaults
+		{&WEBAUTHN_RPID, "WEBAUTHN_RPID"},
+		{&WEBAUTHN_ORIGIN, "WEBAUTHN_ORIGIN"},
+		{&WEBAUTHN_RP_NAME, "WEBAUTHN_RP_NAME"},
 	}
 	if err := lookupEnvs(envs); err != nil {
 		return err
@@ -145,9 +155,20 @@ type envLookup struct {
 
 func lookupEnvs(envs []envLookup) error {
 	var errorSlice []error
+	var optionalWebAuthVars = map[string]bool{
+		"WEBAUTHN_RPID":    true,
+		"WEBAUTHN_ORIGIN":  true,
+		"WEBAUTHN_RP_NAME": true,
+	}
+
 	for _, env := range envs {
 		val, err := lookupEnv(env.key)
 		if err != nil {
+			// Skip errors for optional WebAuthn variables
+			if _, ok := optionalWebAuthVars[env.key]; ok {
+				slog.Debug("Optional WebAuthn variable not set", "key", env.key)
+				continue
+			}
 			errorSlice = append(errorSlice, err)
 		}
 		*env.ptr = val

@@ -16,10 +16,12 @@ import (
 	"github.com/ditto-assistant/backend/cfg/secr"
 	apiv1 "github.com/ditto-assistant/backend/pkg/api/v1"
 	apiv2 "github.com/ditto-assistant/backend/pkg/api/v2"
+	"github.com/ditto-assistant/backend/pkg/api/v2/passkeys"
 	"github.com/ditto-assistant/backend/pkg/core"
 	"github.com/ditto-assistant/backend/pkg/middleware"
 	"github.com/ditto-assistant/backend/pkg/services/db"
 	"github.com/ditto-assistant/backend/pkg/services/db/users"
+	"github.com/ditto-assistant/backend/pkg/services/encryption"
 	"github.com/ditto-assistant/backend/pkg/services/llm"
 	"github.com/ditto-assistant/backend/pkg/services/llm/cerebras"
 	"github.com/ditto-assistant/backend/pkg/services/llm/claude"
@@ -32,6 +34,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/services/search/brave"
 	"github.com/ditto-assistant/backend/pkg/services/search/google"
 	"github.com/ditto-assistant/backend/pkg/services/stripe"
+	"github.com/ditto-assistant/backend/pkg/services/webauthn"
 	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/ditto-assistant/backend/types/ty"
 )
@@ -42,7 +45,7 @@ func main() {
 	defer cancel()
 	var shutdownWG sync.WaitGroup
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGINT)
+	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGINT)
 	sdCtx := ty.ShutdownContext{
 		Background:       bgCtx,
 		WaitGroup:        &shutdownWG,
@@ -57,18 +60,35 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+	// Initialize encryption service
+	encryptionService := encryption.NewService(db.D)
+	webAuthnService, err := webauthn.NewService(bgCtx, db.D)
+	if err != nil {
+		log.Fatalf("failed to initialize webauthn service: %s", err)
+	}
+	passkeysService := passkeys.NewWebAuthnHandlers(webAuthnService, encryptionService)
+	passkeysService.Routes(mux)
+	authMiddleware := middleware.NewAuth(coreSvc.Auth)
+
 	searchClient := search.NewClient(
 		search.WithService(brave.NewService(sdCtx, coreSvc.Secr)),
 		search.WithService(google.NewService(sdCtx, coreSvc.Secr)),
 	)
 	dalleClient := dalle.NewClient(secr.OPENAI_DALLE_API_KEY.String(), llm.HttpClient)
+
+	// Initialize API v1 with encryption service
 	apiv1.NewService(sdCtx, coreSvc, apiv1.ServiceClients{
-		SearchClient: searchClient,
-		Dalle:        dalleClient,
+		SearchClient:      searchClient,
+		Dalle:             dalleClient,
+		EncryptionService: encryptionService,
 	}).Routes(mux)
+
 	stripe.NewClient(coreSvc.Secr, coreSvc.Auth).Routes(mux)
 	apiv2.NewService(coreSvc, sdCtx).Routes(mux)
 	cerebrasClient := cerebras.NewService(&sdCtx, coreSvc.Secr)
+
+	// Register encryption routes
+	// api.RegisterEncryptionRoutes(mux, encryptionService, authMiddleware)
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
@@ -192,17 +212,16 @@ func main() {
 		})
 	})
 
-	handler := middleware.NewCors().Handler(mux)
+	handler := authMiddleware.Handler(mux)
+	handler = middleware.NewCors().Handler(handler)
 	server := &http.Server{
 		Addr:    ":3400",
 		Handler: handler,
 	}
 	go func() {
-		select {
-		case sig := <-sigChan:
-			slog.Info("Received SIG; shutting down", "signal", sig)
-			server.Shutdown(bgCtx)
-		}
+		sig := <-sigChan
+		slog.Info("Received SIG; shutting down", "signal", sig)
+		server.Shutdown(bgCtx)
 	}()
 	slog.Debug("Starting server", "addr", server.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {

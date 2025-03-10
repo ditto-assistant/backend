@@ -3,7 +3,9 @@ package rp
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -12,6 +14,45 @@ import (
 	"github.com/ditto-assistant/backend/pkg/services/filestorage"
 	"golang.org/x/sync/errgroup"
 )
+
+// RespondWithJSON writes a JSON response to the given writer
+func RespondWithJSON(w http.ResponseWriter, statusCode int, payload interface{}) {
+	response, err := json.Marshal(payload)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error": "Error marshalling JSON response"}`))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	w.Write(response)
+}
+
+// SuccessResponse represents a simple success message response
+type SuccessResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}
+
+// Encryption Response Types
+
+// CreateEncryptedPromptResponse represents the response for creating an encrypted prompt
+type CreateEncryptedPromptResponse struct {
+	PromptID string `json:"promptId"`
+}
+
+// SaveEncryptedResponseResponse represents the response for saving an encrypted response
+type SaveEncryptedResponseResponse struct {
+	Success bool `json:"success"`
+}
+
+// MigrationResponse represents the response for migrating user conversations to encrypted format
+type MigrationResponse struct {
+	Success             bool     `json:"success"`
+	MigratedCount       int      `json:"migratedCount"`
+	FailedCount         int      `json:"failedCount,omitempty"`
+	FailedConversations []string `json:"failedConversations,omitempty"`
+}
 
 type BalanceV1 struct {
 	BalanceRaw         int64      `json:"balanceRaw"`
@@ -52,6 +93,13 @@ type Memory struct {
 	EmbeddingResponse5 firestore.Vector32 `json:"-" firestore:"embedding_response_5"`
 	Depth              int                `json:"depth" firestore:"-"`
 	Children           []Memory           `json:"children,omitempty" firestore:"-"`
+
+	// Encryption fields
+	IsEncrypted       bool   `json:"is_encrypted,omitempty" firestore:"is_encrypted"`
+	EncryptedPrompt   string `json:"encrypted_prompt,omitempty" firestore:"encrypted_prompt"`
+	EncryptedResponse string `json:"encrypted_response,omitempty" firestore:"encrypted_response"`
+	EncryptionKeyID   string `json:"encryption_key_id,omitempty" firestore:"encryption_key_id"`
+	EncryptionVersion int    `json:"encryption_version,omitempty" firestore:"encryption_version"`
 }
 
 // MemoriesV1 represents the response for getting memories

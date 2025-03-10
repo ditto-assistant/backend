@@ -27,6 +27,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/services/llm/googai"
 	"github.com/ditto-assistant/backend/pkg/utils/numfmt"
 	_ "github.com/tursodatabase/go-libsql"
+	"golang.org/x/mod/semver"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -615,10 +616,15 @@ func rollback(ctx context.Context, version string) error {
 	if err != nil {
 		return fmt.Errorf("error reading rollback files: %w", err)
 	}
-	slices.Reverse(rollbackFiles)
+	slices.SortFunc(rollbackFiles, func(a, b string) int {
+		aVersion := strings.TrimSuffix(filepath.Base(a), ".sql")
+		bVersion := strings.TrimSuffix(filepath.Base(b), ".sql")
+		return semver.Compare(bVersion, aVersion)
+	})
+	fmt.Println(rollbackFiles)
 	for _, file := range rollbackFiles {
 		fileVersion := strings.TrimSuffix(filepath.Base(file), ".sql")
-		if fileVersion <= version {
+		if semver.Compare(fileVersion, version) <= 0 {
 			break // Stop rolling back once we reach the target version
 		}
 		if err := applyRollback(ctx, file); err != nil {

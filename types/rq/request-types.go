@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"cloud.google.com/go/firestore"
 	"github.com/ditto-assistant/backend/pkg/services/llm"
@@ -171,4 +172,43 @@ type SaveResponseV1 struct {
 	UserID   string `json:"userID"`
 	PairID   string `json:"pairID"`
 	Response string `json:"response"`
+}
+
+// Encryption Request Types
+
+// CreateEncryptedPromptRequest represents a request to create an encrypted prompt
+type CreateEncryptedPromptRequest struct {
+	UserID            string `json:"userId,omitempty"` // Can be derived from auth context
+	EncryptedPrompt   string `json:"encryptedPrompt"`
+	UnencryptedPrompt string `json:"unencryptedPrompt"` // For embeddings only, not stored
+	EncryptionKeyID   string `json:"encryptionKeyId"`
+	EncryptionVersion int    `json:"encryptionVersion"`
+	Model             string `json:"model"`
+	ConversationID    string `json:"conversationId,omitempty"`
+}
+
+// SaveEncryptedResponseRequest represents a request to save an encrypted response
+type SaveEncryptedResponseRequest struct {
+	UserID              string    `json:"userId,omitempty"` // Can be derived from auth context
+	PromptID            string    `json:"promptId"`
+	EncryptedResponse   string    `json:"encryptedResponse"`
+	UnencryptedResponse string    `json:"unencryptedResponse"` // For embeddings only, not stored
+	EncryptionKeyID     string    `json:"encryptionKeyId"`
+	EncryptionVersion   int       `json:"encryptionVersion"`
+	ResponseTimestamp   time.Time `json:"responseTimestamp"`
+}
+
+// MigrateConversation represents a single conversation to be migrated to encryption
+type MigrateConversation struct {
+	ConversationID    string `json:"conversationId"`
+	EncryptedPrompt   string `json:"encryptedPrompt"`
+	EncryptedResponse string `json:"encryptedResponse"`
+}
+
+// MigrateConversationsRequest represents a request to migrate a user's conversations to encrypted versions
+type MigrateConversationsRequest struct {
+	UserID            string                `json:"userId,omitempty"` // Can be derived from auth context
+	EncryptionKeyID   string                `json:"encryptionKeyId"`
+	EncryptionVersion int                   `json:"encryptionVersion"`
+	Conversations     []MigrateConversation `json:"conversations"`
 }

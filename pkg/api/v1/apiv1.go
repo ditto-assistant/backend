@@ -17,8 +17,10 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/pkg/core"
+	"github.com/ditto-assistant/backend/pkg/services/authfirebase"
 	"github.com/ditto-assistant/backend/pkg/services/db"
 	"github.com/ditto-assistant/backend/pkg/services/db/users"
+	"github.com/ditto-assistant/backend/pkg/services/encryption"
 	"github.com/ditto-assistant/backend/pkg/services/firestoremem"
 	"github.com/ditto-assistant/backend/pkg/services/llm"
 	"github.com/ditto-assistant/backend/pkg/services/llm/openai"
@@ -48,16 +50,18 @@ func (s *Service) Routes(mux *http.ServeMux) {
 const presignTTL = 24 * time.Hour
 
 type Service struct {
-	sd           ty.ShutdownContext
-	sc           *core.Client
-	searchClient *search.Client
-	urlCache     *mapcache.MapCache[string, string]
-	dalle        *dalle.Client
+	sd                ty.ShutdownContext
+	sc                *core.Client
+	searchClient      *search.Client
+	urlCache          *mapcache.MapCache[string, string]
+	dalle             *dalle.Client
+	encryptionService *encryption.Service
 }
 
 type ServiceClients struct {
-	SearchClient *search.Client
-	Dalle        *dalle.Client
+	SearchClient      *search.Client
+	Dalle             *dalle.Client
+	EncryptionService *encryption.Service
 }
 
 func NewService(sd ty.ShutdownContext, sc *core.Client, setup ServiceClients) *Service {
@@ -69,11 +73,12 @@ func NewService(sd ty.ShutdownContext, sc *core.Client, setup ServiceClients) *S
 		panic(err)
 	}
 	return &Service{
-		sd:           sd,
-		sc:           sc,
-		searchClient: setup.SearchClient,
-		urlCache:     urlCache,
-		dalle:        setup.Dalle,
+		sd:                sd,
+		sc:                sc,
+		searchClient:      setup.SearchClient,
+		urlCache:          urlCache,
+		dalle:             setup.Dalle,
+		encryptionService: setup.EncryptionService,
 	}
 }
 
@@ -560,6 +565,14 @@ func (s *Service) CreatePrompt(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
+
+	// Check for encrypted prompt request
+	if r.Header.Get("Content-Type") == "application/json+encrypted" {
+		s.createEncryptedPrompt(w, r, tok)
+		return
+	}
+
+	// Standard unencrypted prompt
 	var bod rq.CreatePromptV1
 	if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -607,6 +620,87 @@ func (s *Service) CreatePrompt(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// createEncryptedPrompt handles the creation of an encrypted prompt
+func (s *Service) createEncryptedPrompt(w http.ResponseWriter, r *http.Request, tok *authfirebase.AuthToken) {
+	var encReq rq.CreateEncryptedPromptRequest
+	if err := json.NewDecoder(r.Body).Decode(&encReq); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := tok.Check(encReq.UserID); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+	// Validate encryption request
+	if encReq.EncryptedPrompt == "" || encReq.UnencryptedPrompt == "" || encReq.EncryptionKeyID == "" {
+		http.Error(w, "EncryptedPrompt, UnencryptedPrompt, and EncryptionKeyID are required", http.StatusBadRequest)
+		return
+	}
+
+	user := users.User{UID: encReq.UserID}
+	ctx := r.Context()
+	if err := user.GetByUID(ctx, db.D); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Verify encryption key
+	if s.encryptionService != nil {
+		_, err := s.encryptionService.GetKey(ctx, user.ID, encReq.EncryptionKeyID)
+		if err != nil {
+			slog.Error("Error verifying encryption key", "error", err, "user_id", encReq.UserID)
+			http.Error(w, "Invalid encryption key", http.StatusBadRequest)
+			return
+		}
+	}
+
+	slog := slog.With("action", "embed-encrypted", "userID", encReq.UserID, "email", user.Email.String)
+
+	// Generate embedding from unencrypted text (for search)
+	model := llm.ModelTextEmbedding005
+	embedding, tokens, err := s.sc.Embedder.EmbedSingle(ctx, encReq.UnencryptedPrompt, model)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Create prompt with both encrypted and unencrypted versions
+	deviceID := r.Header.Get("X-Device-ID")
+	id, err := s.sc.Memories.CreatePrompt(ctx, encReq.UserID, &firestoremem.CreatePromptRequest{
+		DeviceID:          deviceID,
+		Prompt:            encReq.UnencryptedPrompt, // For embeddings
+		EncryptedPrompt:   encReq.EncryptedPrompt,   // For storage
+		EncryptionKeyID:   encReq.EncryptionKeyID,
+		EncryptionVersion: encReq.EncryptionVersion,
+		IsEncrypted:       true,
+		EmbeddingPrompt5:  firestore.Vector32(embedding),
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return prompt ID
+	resp := rp.CreateEncryptedPromptResponse{
+		PromptID: id,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
+
+	// Record token usage
+	s.sd.Run(func(ctx context.Context) {
+		slog.Debug("receipt", "input_tokens", tokens)
+		receipt := db.Receipt{
+			UserID:      user.ID,
+			TotalTokens: tokens,
+			ServiceName: model,
+		}
+		if err := receipt.Insert(ctx); err != nil {
+			slog.Error("failed to insert receipt", "error", err)
+		}
+	})
+}
+
 // - MARK: save-response
 
 func (s *Service) SaveResponse(w http.ResponseWriter, r *http.Request) {
@@ -616,6 +710,14 @@ func (s *Service) SaveResponse(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
+
+	// Check for encrypted response request
+	if r.Header.Get("Content-Type") == "application/json+encrypted" {
+		s.saveEncryptedResponse(w, r, slog, tok)
+		return
+	}
+
+	// Standard unencrypted response
 	var bod rq.SaveResponseV1
 	if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
 		slog.Error("Failed to decode request body", "error", err)
@@ -665,7 +767,94 @@ func (s *Service) SaveResponse(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GetConversations handles paginated retrieval of conversation history
+// saveEncryptedResponse handles saving an encrypted response
+func (s *Service) saveEncryptedResponse(w http.ResponseWriter, r *http.Request, slog *slog.Logger, tok *authfirebase.AuthToken) {
+	var encReq rq.SaveEncryptedResponseRequest
+	if err := json.NewDecoder(r.Body).Decode(&encReq); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	userUID := encReq.UserID
+	if err := tok.Check(userUID); err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
+
+	// Validate encryption request
+	if encReq.EncryptedResponse == "" || encReq.UnencryptedResponse == "" || encReq.PromptID == "" || encReq.EncryptionKeyID == "" {
+		http.Error(w, "EncryptedResponse, UnencryptedResponse, PromptID, and EncryptionKeyID are required", http.StatusBadRequest)
+		return
+	}
+
+	user := users.User{UID: userUID}
+	ctx := r.Context()
+	if err := user.GetByUID(ctx, db.D); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Verify encryption key
+	if s.encryptionService != nil {
+		_, err := s.encryptionService.GetKey(ctx, user.ID, encReq.EncryptionKeyID)
+		if err != nil {
+			slog.Error("Error verifying encryption key", "error", err, "user_id", userUID)
+			http.Error(w, "Invalid encryption key", http.StatusBadRequest)
+			return
+		}
+	}
+
+	slog = slog.With("userID", userUID, "action", "save-encrypted-response")
+
+	// Generate embedding from unencrypted text (for search)
+	model := llm.ModelTextEmbedding005
+	embedding, tokens, err := s.sc.Embedder.EmbedSingle(ctx, encReq.UnencryptedResponse, model)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Save both encrypted and unencrypted versions
+	err = s.sc.Memories.SaveResponse(ctx, &firestoremem.SaveResponseRequest{
+		UserID:             userUID,
+		PairID:             encReq.PromptID,
+		Response:           encReq.UnencryptedResponse, // For embeddings
+		EncryptedResponse:  encReq.EncryptedResponse,   // For storage
+		EncryptionKeyID:    encReq.EncryptionKeyID,
+		EncryptionVersion:  encReq.EncryptionVersion,
+		IsEncrypted:        true,
+		EmbeddingResponse5: firestore.Vector32(embedding),
+	})
+
+	if err != nil {
+		slog.Error("Failed to save encrypted response", "error", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return success
+	resp := rp.SaveEncryptedResponseResponse{
+		Success: true,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(resp)
+
+	// Record token usage
+	s.sd.Run(func(ctx context.Context) {
+		slog.Debug("receipt", "input_tokens", tokens)
+		receipt := db.Receipt{
+			UserID:      user.ID,
+			TotalTokens: tokens,
+			ServiceName: model,
+		}
+		if err := receipt.Insert(ctx); err != nil {
+			slog.Error("failed to insert receipt", "error", err)
+		}
+	})
+}
+
+// - MARK: conversations
+
 func (s *Service) GetConversations(w http.ResponseWriter, r *http.Request) {
 	tok, err := s.sc.Auth.VerifyToken(r)
 	if err != nil {
