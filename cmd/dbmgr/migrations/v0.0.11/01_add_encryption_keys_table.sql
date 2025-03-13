@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS encryption_keys (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL,
   key_id TEXT NOT NULL,
-  encrypted_key TEXT NOT NULL,
+  public_key TEXT NOT NULL,
   credential_id TEXT NULL,
   credential_rp_id TEXT NULL,
   credential_created_at DATETIME NULL,
@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS encryption_keys (
   last_used_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   is_active BOOLEAN DEFAULT TRUE,
   key_version INTEGER DEFAULT 1,
+  prf_salt TEXT NULL,
+  prf_enabled BOOLEAN DEFAULT FALSE,
+  prf_result TEXT NULL,
   FOREIGN KEY (user_id) REFERENCES users(id),
   UNIQUE (user_id, key_id)
 );
@@ -30,6 +33,7 @@ CREATE TABLE IF NOT EXISTS webauthn_challenges (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   expires_at DATETIME NOT NULL,
   type TEXT NOT NULL, -- 'registration' or 'authentication'
+  extensions TEXT NULL,
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
 

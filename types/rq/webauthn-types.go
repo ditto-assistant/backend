@@ -40,8 +40,8 @@ type WebAuthnAuthenticationRequest struct {
 // Updated RegisterKeyRequest for WebAuthn support
 type RegisterKeyRequest struct {
 	// Original fields
-	KeyID        string `json:"keyId"`
-	EncryptedKey string `json:"encryptedKey"`
+	KeyID     string `json:"keyId"`
+	PublicKey string `json:"encryptedKey"`
 
 	// New fields for passkey support
 	CredentialID        string `json:"credentialId,omitempty"`
@@ -53,8 +53,8 @@ type RegisterKeyRequest struct {
 // Updated RotateKeyRequest for WebAuthn support
 type RotateKeyRequest struct {
 	// Original fields
-	KeyID           string `json:"keyId"`
-	NewEncryptedKey string `json:"newEncryptedKey"`
+	KeyID        string `json:"keyId"`
+	NewPublicKey string `json:"newPublicKey"`
 
 	// New fields for passkey support
 	NewCredentialID        string `json:"newCredentialId,omitempty"`

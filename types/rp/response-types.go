@@ -264,10 +264,9 @@ func writeMemoryWithChildren(b *bytes.Buffer, mem *Memory, indent int) {
 
 // MigrateConversationsResponse represents the response from a migration operation
 type MigrateConversationsV2 struct {
-	Success       bool      `json:"success"`
-	MigratedCount int       `json:"migratedCount"`
-	MigrationTime float64   `json:"migrationTime"`
-	CompletedAt   time.Time `json:"completedAt"`
+	MigratedCount     int           `json:"migratedCount"`
+	MigrationDuration time.Duration `json:"migrationDuration"`
+	CompletedAt       time.Time     `json:"completedAt"`
 }
 
 // GetConversationsV2 represents the response for a paginated conversation query

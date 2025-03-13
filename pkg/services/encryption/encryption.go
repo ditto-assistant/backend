@@ -6,29 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/ditto-assistant/backend/pkg/services/db/users"
+	"github.com/ditto-assistant/backend/types/rp"
 )
-
-// Key represents an encryption key in our system
-type Key struct {
-	ID           int64
-	UserID       int64
-	KeyID        string
-	EncryptedKey string
-	CreatedAt    time.Time
-	LastUsedAt   time.Time
-	IsActive     bool
-	KeyVersion   int
-
-	// Passkey-related fields
-	CredentialID        string
-	CredentialRPID      string
-	CredentialCreatedAt time.Time
-	KeyDerivationMethod string
-	PasskeyName         string
-}
 
 // Client provides encryption key management functionality
 type Client struct {
@@ -53,6 +34,7 @@ func (s *Client) RegisterKey(
 	credentialRPID string,
 	keyDerivationMethod string,
 	passkeyName string,
+	prfSalt string, // Optional PRF salt
 ) error {
 	// Get user
 	user := users.User{UID: userUID}
@@ -79,20 +61,31 @@ func (s *Client) RegisterKey(
 		return fmt.Errorf("error checking existing key: %w", err)
 	}
 
+	// Get PRF salt if provided
+	var prfSaltValue string
+	var isPRFEnabled bool
+	if prfSalt != "" {
+		prfSaltValue = prfSalt
+		isPRFEnabled = true
+	}
+
 	if count > 0 {
 		// Update existing key
 		_, err = tx.ExecContext(ctx,
 			`UPDATE encryption_keys SET 
-			encrypted_key = ?, 
+			public_key = ?, 
 			last_used_at = CURRENT_TIMESTAMP, 
 			is_active = TRUE,
 			credential_id = ?,
 			credential_rp_id = ?,
 			credential_created_at = CURRENT_TIMESTAMP,
-			key_derivation_method = ?
+			key_derivation_method = ?,
+			prf_salt = ?,
+			prf_enabled = ?
 			WHERE user_id = ? AND key_id = ?`,
 			encryptedKey, credentialID, credentialRPID,
-			keyDerivationMethod, user.ID, keyID)
+			keyDerivationMethod, prfSaltValue, isPRFEnabled,
+			user.ID, keyID)
 		if err != nil {
 			return fmt.Errorf("error updating key: %w", err)
 		}
@@ -102,13 +95,16 @@ func (s *Client) RegisterKey(
 			`INSERT INTO encryption_keys (
 				user_id, 
 				key_id, 
-				encrypted_key, 
+				public_key, 
 				credential_id, 
 				credential_rp_id, 
 				credential_created_at,
-				key_derivation_method) 
-			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`,
-			user.ID, keyID, encryptedKey, credentialID, credentialRPID, keyDerivationMethod)
+				key_derivation_method,
+				prf_salt,
+				prf_enabled) 
+			VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)`,
+			user.ID, keyID, encryptedKey, credentialID, credentialRPID,
+			keyDerivationMethod, prfSaltValue, isPRFEnabled)
 		if err != nil {
 			return fmt.Errorf("error inserting key: %w", err)
 		}
@@ -128,25 +124,26 @@ func (s *Client) RegisterKey(
 }
 
 // GetKey retrieves an encryption key for a user
-func (s *Client) GetKey(ctx context.Context, userID int64, keyID string) (Key, error) {
-	var key Key
+func (s *Client) GetKey(ctx context.Context, userID int64, keyID string) (rp.Key, error) {
+	var key rp.Key
 
 	// Initialize null-able fields with pointers
-	var credentialID, credentialRPID, keyDerivationMethod sql.NullString
+	var credentialID, credentialRPID, keyDerivationMethod, prfSalt, prfResult sql.NullString
 	var credentialCreatedAt sql.NullTime
+	var prfEnabled sql.NullBool
 
 	// Get key
 	err := s.DB.QueryRowContext(ctx,
 		`SELECT 
-            id, key_id, encrypted_key, created_at, last_used_at, is_active, key_version,
-            credential_id,  credential_rp_id, credential_created_at,
-            key_derivation_method
+            id, key_id, public_key, created_at, last_used_at, is_active, key_version,
+            credential_id, credential_rp_id, credential_created_at,
+            key_derivation_method, prf_salt, prf_enabled, prf_result
          FROM encryption_keys 
          WHERE user_id = ? AND key_id = ? AND is_active = TRUE`,
 		userID, keyID).Scan(
 		&key.ID,
 		&key.KeyID,
-		&key.EncryptedKey,
+		&key.PublicKey,
 		&key.CreatedAt,
 		&key.LastUsedAt,
 		&key.IsActive,
@@ -155,13 +152,16 @@ func (s *Client) GetKey(ctx context.Context, userID int64, keyID string) (Key, e
 		&credentialRPID,
 		&credentialCreatedAt,
 		&keyDerivationMethod,
+		&prfSalt,
+		&prfEnabled,
+		&prfResult,
 	)
 
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return Key{}, fmt.Errorf("key not found: %w", err)
+			return rp.Key{}, fmt.Errorf("key not found: %w", err)
 		}
-		return Key{}, fmt.Errorf("error getting key: %w", err)
+		return rp.Key{}, fmt.Errorf("error getting key: %w", err)
 	}
 
 	// Set key.UserID
@@ -177,10 +177,18 @@ func (s *Client) GetKey(ctx context.Context, userID int64, keyID string) (Key, e
 	if credentialCreatedAt.Valid {
 		key.CredentialCreatedAt = credentialCreatedAt.Time
 	}
+	key.KeyDerivationMethod = "direct" // Default for backward compatibility
 	if keyDerivationMethod.Valid {
 		key.KeyDerivationMethod = keyDerivationMethod.String
-	} else {
-		key.KeyDerivationMethod = "direct" // Default for backward compatibility
+	}
+	if prfSalt.Valid {
+		key.PRFSalt = prfSalt.String
+	}
+	if prfEnabled.Valid {
+		key.PRFEnabled = prfEnabled.Bool
+	}
+	if prfResult.Valid {
+		key.PRFResult = prfResult.String
 	}
 
 	// Update last used timestamp
@@ -209,7 +217,7 @@ func (s *Client) RotateKey(
 	ctx context.Context,
 	userUID,
 	keyID,
-	newEncryptedKey string,
+	newPublicKey string,
 	newCredentialID string,
 	newCredentialRPID string,
 	keyDerivationMethod string,
@@ -260,14 +268,14 @@ func (s *Client) RotateKey(
 		`INSERT INTO encryption_keys (
             user_id, 
             key_id, 
-            encrypted_key, 
+            public_key, 
             key_version,
             credential_id, 
             credential_rp_id, 
             credential_created_at,
             key_derivation_method
         ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?)`,
-		user.ID, keyID, newEncryptedKey, currentVersion+1,
+		user.ID, keyID, newPublicKey, currentVersion+1,
 		newCredentialID, newCredentialRPID, keyDerivationMethod)
 	if err != nil {
 		return fmt.Errorf("error inserting new key version: %w", err)
@@ -288,7 +296,7 @@ func (s *Client) RotateKey(
 }
 
 // ListKeys returns all active encryption keys for a user
-func (s *Client) ListKeys(ctx context.Context, userUID string) ([]Key, error) {
+func (s *Client) ListKeys(ctx context.Context, userUID string) ([]rp.Key, error) {
 	// Get user
 	user := users.User{UID: userUID}
 	if err := user.GetByUID(ctx, s.DB); err != nil {
@@ -301,9 +309,9 @@ func (s *Client) ListKeys(ctx context.Context, userUID string) ([]Key, error) {
 	// Query for keys
 	rows, err := s.DB.QueryContext(ctx,
 		`SELECT 
-            id, key_id, encrypted_key, created_at, last_used_at, is_active, key_version,
+            id, key_id, public_key, created_at, last_used_at, is_active, key_version,
             credential_id, credential_rp_id, credential_created_at,
-            key_derivation_method
+            key_derivation_method, prf_salt, prf_enabled, prf_result
         FROM encryption_keys 
         WHERE user_id = ? 
         ORDER BY created_at DESC`,
@@ -313,19 +321,20 @@ func (s *Client) ListKeys(ctx context.Context, userUID string) ([]Key, error) {
 	}
 	defer rows.Close()
 
-	var keys []Key
+	var keys []rp.Key
 	for rows.Next() {
-		var key Key
+		var key rp.Key
 		key.UserID = user.ID
 
 		// Initialize null-able fields with pointers
-		var credentialID, credentialRPID, keyDerivationMethod sql.NullString
+		var prfSalt, prfResult, credentialID, credentialRPID, keyDerivationMethod sql.NullString
+		var prfEnabled sql.NullBool
 		var credentialCreatedAt sql.NullTime
 
 		if err := rows.Scan(
 			&key.ID,
 			&key.KeyID,
-			&key.EncryptedKey,
+			&key.PublicKey,
 			&key.CreatedAt,
 			&key.LastUsedAt,
 			&key.IsActive,
@@ -334,6 +343,9 @@ func (s *Client) ListKeys(ctx context.Context, userUID string) ([]Key, error) {
 			&credentialRPID,
 			&credentialCreatedAt,
 			&keyDerivationMethod,
+			&prfSalt,
+			&prfEnabled,
+			&prfResult,
 		); err != nil {
 			return nil, fmt.Errorf("error scanning key row: %w", err)
 		}
@@ -353,7 +365,15 @@ func (s *Client) ListKeys(ctx context.Context, userUID string) ([]Key, error) {
 		} else {
 			key.KeyDerivationMethod = "direct" // Default for backward compatibility
 		}
-
+		if prfSalt.Valid {
+			key.PRFSalt = prfSalt.String
+		}
+		if prfEnabled.Valid {
+			key.PRFEnabled = prfEnabled.Bool
+		}
+		if prfResult.Valid {
+			key.PRFResult = prfResult.String
+		}
 		keys = append(keys, key)
 	}
 

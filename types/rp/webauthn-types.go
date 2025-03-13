@@ -11,6 +11,7 @@ type WebAuthnChallenge struct {
 	UserVerification string   `json:"userVerification"`           // "required", "preferred", "discouraged"
 	Timeout          int      `json:"timeout"`                    // Timeout in milliseconds
 	AllowCredentials []string `json:"allowCredentials,omitempty"` // Allowed credential IDs for authentication
+	PRFSalt          string   `json:"prfSalt,omitempty"`          // PRF Salt for key derivation (base64 encoded)
 }
 
 // WebAuthnRegistrationResponse represents the response to a registration request
@@ -29,12 +30,12 @@ type WebAuthnAuthenticationResponse struct {
 
 // Updated response types for the GetKeyResponse
 type GetKeyResponse struct {
-	KeyID        string    `json:"keyId"`
-	EncryptedKey string    `json:"encryptedKey"`
-	CreatedAt    time.Time `json:"createdAt"`
-	LastUsedAt   time.Time `json:"lastUsedAt,omitempty"`
-	IsActive     bool      `json:"isActive"`
-	Version      int       `json:"version"`
+	KeyID      string    `json:"keyId"`
+	PublicKey  string    `json:"encryptedKey"`
+	CreatedAt  time.Time `json:"createdAt"`
+	LastUsedAt time.Time `json:"lastUsedAt,omitempty"`
+	IsActive   bool      `json:"isActive"`
+	Version    int       `json:"version"`
 
 	// New fields for passkey support
 	CredentialID        string `json:"credentialId,omitempty"`
@@ -42,21 +43,31 @@ type GetKeyResponse struct {
 	KeyDerivationMethod string `json:"keyDerivationMethod,omitempty"`
 }
 
-// Updated KeyListItem for WebAuthn metadata
-type KeyListItem struct {
+// ListKeysResponse represents the response for listing encryption keys
+type ListKeysResponse struct {
+	Keys []Key `json:"keys"`
+}
+
+// Key represents an encryption key in our system
+type Key struct {
+	ID         int64     `json:"id"`
+	UserID     int64     `json:"userId"`
 	KeyID      string    `json:"keyId"`
+	PublicKey  string    `json:"publicKey"`
 	CreatedAt  time.Time `json:"createdAt"`
 	LastUsedAt time.Time `json:"lastUsedAt"`
 	IsActive   bool      `json:"isActive"`
-	Version    int       `json:"version"`
+	KeyVersion int       `json:"keyVersion"`
 
-	// New fields for passkey support
-	CredentialID        string `json:"credentialId,omitempty"`
-	KeyDerivationMethod string `json:"keyDerivationMethod,omitempty"`
-	PasskeyName         string `json:"passkeyName,omitempty"`
-}
+	// Passkey-related fields
+	CredentialID        string    `json:"credentialId"`
+	CredentialRPID      string    `json:"credentialRpId"`
+	CredentialCreatedAt time.Time `json:"credentialCreatedAt"`
+	KeyDerivationMethod string    `json:"keyDerivationMethod"`
+	PasskeyName         string    `json:"passkeyName"`
 
-// ListKeysResponse represents the response for listing encryption keys
-type ListKeysResponse struct {
-	Keys []KeyListItem `json:"keys"`
+	// PRF extension fields
+	PRFSalt    string `json:"prfSalt"`    // Base64-encoded salt for PRF
+	PRFEnabled bool   `json:"prfEnabled"` // Whether PRF extension was used
+	PRFResult  string `json:"prfResult"`  // Base64-encoded PRF evaluation result
 }

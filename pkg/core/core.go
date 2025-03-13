@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"time"
 
 	firebase "firebase.google.com/go/v4"
 	"github.com/ditto-assistant/backend/cfg/secr"
@@ -19,8 +18,6 @@ type Client struct {
 	FileStorage *filestorage.Client
 	Embedder    *googai.Client
 }
-
-const presignTTL = 24 * time.Hour
 
 func NewClient(ctx context.Context) (*Client, error) {
 	secrClient, err := secr.Setup(ctx)

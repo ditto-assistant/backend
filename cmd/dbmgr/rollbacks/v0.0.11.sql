@@ -12,7 +12,7 @@ CREATE TABLE encryption_keys_temp (
   id INTEGER PRIMARY KEY,
   user_id INTEGER NOT NULL,
   key_id TEXT NOT NULL,
-  encrypted_key TEXT NOT NULL,
+  public_key TEXT NOT NULL,
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   last_used_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   is_active BOOLEAN DEFAULT TRUE,
@@ -23,7 +23,7 @@ CREATE TABLE encryption_keys_temp (
 
 -- Copy data to the temporary table (only columns that exist in both tables)
 INSERT INTO encryption_keys_temp 
-SELECT id, user_id, key_id, encrypted_key, created_at, last_used_at, is_active, key_version
+SELECT id, user_id, key_id, public_key, created_at, last_used_at, is_active, key_version
 FROM encryption_keys;
 
 -- Drop the original table

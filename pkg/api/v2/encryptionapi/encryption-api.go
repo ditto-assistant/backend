@@ -103,7 +103,7 @@ func (s *Service) MigrateConversations(w http.ResponseWriter, r *http.Request) {
 	slog.Info("Migrated conversations to encrypted format",
 		"userID", userID,
 		"count", response.MigratedCount,
-		"migrationTime", response.MigrationTime)
+		"migrationTime", response.MigrationDuration)
 
 	rp.RespondWithJSON(w, http.StatusOK, response)
 }

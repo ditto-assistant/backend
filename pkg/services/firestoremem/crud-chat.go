@@ -2,6 +2,7 @@ package firestoremem
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"cloud.google.com/go/firestore"
@@ -88,12 +89,11 @@ func (cl *Client) GetEmbeddingPrompt(ctx context.Context, userID, pairID string)
 func (cl *Client) MigrateConversations(ctx context.Context, userID string, req *rq.MigrateConversationsV2) (*rp.MigrateConversationsV2, error) {
 	startTime := time.Now()
 	batch := cl.firestore.BulkWriter(ctx)
-
-	// Add each conversation to the batch update
 	for _, conv := range req.Conversations {
 		docRef := cl.ConversationsRef(userID).Doc(conv.DocID)
-		// Set encrypted data and metadata
 		_, err := batch.Update(docRef, []firestore.Update{
+			{Path: "prompt", Value: ""},
+			{Path: "response", Value: ""},
 			{Path: "encrypted_prompt", Value: conv.EncryptedPrompt},
 			{Path: "encrypted_response", Value: conv.EncryptedResponse},
 			{Path: "encryption_key_id", Value: req.EncryptionKeyID},
@@ -102,22 +102,16 @@ func (cl *Client) MigrateConversations(ctx context.Context, userID string, req *
 			{Path: "migration_timestamp", Value: time.Now()},
 		})
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to update pairID: %s: %w", conv.DocID, err)
 		}
 	}
-
-	// Execute the batch update
 	batch.End()
-
-	// Prepare response
 	migratedCount := len(req.Conversations)
-	migrationTime := time.Since(startTime).Seconds()
-
+	migrationTime := time.Since(startTime)
 	return &rp.MigrateConversationsV2{
-		Success:       true,
-		MigratedCount: migratedCount,
-		MigrationTime: migrationTime,
-		CompletedAt:   time.Now(),
+		MigratedCount:     migratedCount,
+		MigrationDuration: migrationTime,
+		CompletedAt:       time.Now(),
 	}, nil
 }
 

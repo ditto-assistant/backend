@@ -2,6 +2,7 @@ package webauthn
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"fmt"
@@ -85,6 +86,7 @@ func NewService(ctx context.Context, db *sql.DB) (*Service, error) {
 				Timeout: config.Timeout,
 			},
 		},
+		// PRF extension is enabled per registration/login, not in config
 	})
 	if err != nil {
 		return nil, fmt.Errorf("error creating WebAuthn: %w", err)
@@ -97,12 +99,17 @@ func NewService(ctx context.Context, db *sql.DB) (*Service, error) {
 }
 
 // SaveChallengeToDB saves a WebAuthn challenge to the database
-func (s *Service) SaveChallengeToDB(ctx context.Context, userID int64, challenge string, rpID, sessionType string) (int64, error) {
+func (s *Service) SaveChallengeToDB(ctx context.Context, userID int64, challenge string, rpID, sessionType string, extensions ...string) (int64, error) {
+	var extensionsJSON string
+	if len(extensions) > 0 && extensions[0] != "" {
+		extensionsJSON = extensions[0]
+	}
+
 	// Save the challenge to the database
 	result, err := s.DB.ExecContext(ctx,
-		`INSERT INTO webauthn_challenges (user_id, challenge, rp_id, expires_at, type)
-		 VALUES (?, ?, ?, datetime('now', '+5 minutes'), ?)`,
-		userID, challenge, rpID, sessionType)
+		`INSERT INTO webauthn_challenges (user_id, challenge, rp_id, expires_at, type, extensions)
+		 VALUES (?, ?, ?, datetime('now', '+5 minutes'), ?, ?)`,
+		userID, challenge, rpID, sessionType, extensionsJSON)
 
 	if err != nil {
 		return 0, fmt.Errorf("error saving challenge to database: %w", err)
@@ -115,17 +122,24 @@ func (s *Service) SaveChallengeToDB(ctx context.Context, userID int64, challenge
 }
 
 // GetChallengeFromDB retrieves a WebAuthn challenge from the database
-func (s *Service) GetChallengeFromDB(ctx context.Context, challengeID int64) (string, error) {
+func (s *Service) GetChallengeFromDB(ctx context.Context, challengeID int64) (string, string, error) {
 	var challenge string
+	var extensions sql.NullString
 	err := s.DB.QueryRowContext(ctx,
-		`SELECT challenge FROM webauthn_challenges 
+		`SELECT challenge, extensions FROM webauthn_challenges 
 		 WHERE id = ? AND expires_at > datetime('now')`,
-		challengeID).Scan(&challenge)
+		challengeID).Scan(&challenge, &extensions)
 
 	if err != nil {
-		return "", fmt.Errorf("error retrieving challenge: %w", err)
+		return "", "", fmt.Errorf("error retrieving challenge: %w", err)
 	}
-	return challenge, nil
+
+	extensionsStr := ""
+	if extensions.Valid {
+		extensionsStr = extensions.String
+	}
+
+	return challenge, extensionsStr, nil
 }
 
 // DeleteChallengeFromDB deletes a WebAuthn challenge from the database
@@ -167,7 +181,7 @@ func (s *Service) GetUserByID(ctx context.Context, userID int64) (*User, error) 
 
 	// Get user credentials
 	rows, err := s.DB.QueryContext(ctx,
-		`SELECT credential_id, encrypted_key FROM encryption_keys 
+		`SELECT credential_id, public_key FROM encryption_keys 
 		 WHERE user_id = ? AND credential_id IS NOT NULL`,
 		userID)
 
@@ -221,6 +235,57 @@ func (s *Service) GetUserByID(ctx context.Context, userID int64) (*User, error) 
 	}
 
 	return user, nil
+}
+
+// GeneratePRFSalt creates a random salt for PRF extension
+func (s *Service) GeneratePRFSalt() (string, []byte, error) {
+	// Generate a random 32-byte salt
+	salt := make([]byte, 32)
+	if _, err := rand.Read(salt); err != nil {
+		return "", nil, fmt.Errorf("error generating PRF salt: %w", err)
+	}
+
+	// Encode for storage
+	saltBase64 := base64.StdEncoding.EncodeToString(salt)
+
+	return saltBase64, salt, nil
+}
+
+// StorePRFResult saves the PRF result for a key
+func (s *Service) StorePRFResult(ctx context.Context, keyID string, prfResult []byte) error {
+	prfResultBase64 := base64.StdEncoding.EncodeToString(prfResult)
+
+	_, err := s.DB.ExecContext(ctx,
+		`UPDATE encryption_keys 
+		 SET prf_result = ?, prf_enabled = TRUE
+		 WHERE key_id = ?`,
+		prfResultBase64, keyID)
+
+	if err != nil {
+		return fmt.Errorf("error storing PRF result: %w", err)
+	}
+
+	return nil
+}
+
+// GetPRFSaltForKey retrieves the PRF salt for a key
+func (s *Service) GetPRFSaltForKey(ctx context.Context, keyID string) ([]byte, error) {
+	var saltBase64 string
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT prf_salt FROM encryption_keys 
+		 WHERE key_id = ? AND prf_enabled = TRUE`,
+		keyID).Scan(&saltBase64)
+
+	if err != nil {
+		return nil, fmt.Errorf("error retrieving PRF salt: %w", err)
+	}
+
+	salt, err := base64.StdEncoding.DecodeString(saltBase64)
+	if err != nil {
+		return nil, fmt.Errorf("error decoding PRF salt: %w", err)
+	}
+
+	return salt, nil
 }
 
 // Helper functions to get domain and origin based on environment

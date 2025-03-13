@@ -73,21 +73,55 @@ func (h *Service) GenerateRegistrationChallenge(w http.ResponseWriter, r *http.R
 		DisplayName: displayName,
 	}
 
-	// Generate registration options
-	options, sessionData, err := h.WebAuthn.WebAuthn.BeginRegistration(webAuthnUser)
+	// Generate a PRF salt for key derivation
+	saltBase64, salt, err := h.WebAuthn.GeneratePRFSalt()
+	if err != nil {
+		slog.Error("Error generating PRF salt", "error", err)
+		http.Error(w, "Failed to generate PRF salt", http.StatusInternalServerError)
+		return
+	}
+
+	// Create PRF extension configuration
+	prfExtension := map[string]any{
+		"eval": map[string]any{
+			"first": map[string]any{
+				"salt": salt,
+			},
+		},
+	}
+
+	// Add PRF extension to WebAuthn options
+	extensions := map[string]any{
+		"prf": prfExtension,
+	}
+
+	// Generate registration options with PRF extension
+	options, sessionData, err := h.WebAuthn.WebAuthn.BeginRegistration(
+		webAuthnUser,
+		wauthn.WithExtensions(extensions),
+	)
 	if err != nil {
 		slog.Error("Error generating registration options", "error", err)
 		http.Error(w, "Failed to generate registration challenge", http.StatusInternalServerError)
 		return
 	}
 
-	// Store session data in database
+	// Serialize extensions for storage
+	extensionsJSON, err := json.Marshal(extensions)
+	if err != nil {
+		slog.Error("Error serializing extensions", "error", err)
+		http.Error(w, "Failed to serialize extensions", http.StatusInternalServerError)
+		return
+	}
+
+	// Store session data in database with extensions
 	challengeID, err := h.WebAuthn.SaveChallengeToDB(
 		r.Context(),
 		user.ID,
 		sessionData.Challenge,
 		h.WebAuthn.WebAuthn.Config.RPID,
 		"registration",
+		string(extensionsJSON),
 	)
 	if err != nil {
 		slog.Error("Error saving challenge to database", "error", err)
@@ -103,6 +137,7 @@ func (h *Service) GenerateRegistrationChallenge(w http.ResponseWriter, r *http.R
 		RPName:           h.WebAuthn.WebAuthn.Config.RPDisplayName,
 		UserVerification: string(options.Response.AuthenticatorSelection.UserVerification),
 		Timeout:          options.Response.Timeout,
+		PRFSalt:          saltBase64, // Include PRF salt in response
 	}
 
 	rp.RespondWithJSON(w, http.StatusOK, response)
@@ -125,11 +160,20 @@ func (h *Service) RegisterPasskey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	passkeyName := query.Get("passkeyName")
-	challenge, err := h.WebAuthn.GetChallengeFromDB(r.Context(), challengeID)
+	challenge, extensionsJSON, err := h.WebAuthn.GetChallengeFromDB(r.Context(), challengeID)
 	if err != nil {
 		slog.Error("Error retrieving challenge", "error", err)
 		http.Error(w, "Invalid or expired challenge", http.StatusBadRequest)
 		return
+	}
+
+	// Parse extensions JSON if available
+	var extensions map[string]interface{}
+	if extensionsJSON != "" {
+		if err := json.Unmarshal([]byte(extensionsJSON), &extensions); err != nil {
+			slog.Warn("Error parsing extensions JSON", "error", err)
+			// Continue anyway - PRF is optional
+		}
 	}
 
 	webAuthnUser := &webauthn.User{
@@ -153,7 +197,6 @@ func (h *Service) RegisterPasskey(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("Registration verification failed: %v", err), http.StatusBadRequest)
 		return
 	}
-
 	// Registration successful - now register the encryption key
 	keyID := fmt.Sprintf("passkey-%s", base64.StdEncoding.EncodeToString(credential.ID))
 
@@ -161,7 +204,11 @@ func (h *Service) RegisterPasskey(w http.ResponseWriter, r *http.Request) {
 	credentialID := base64.StdEncoding.EncodeToString(credential.ID)
 	credentialPublicKey := base64.StdEncoding.EncodeToString(credential.PublicKey)
 
-	// Register the key with encryption service
+	// Extract PRF result if available
+	var prfSalt string
+	var keyDerivationMethod string
+
+	// Register the key with encryption service, including PRF salt if available
 	err = h.Encryption.RegisterKey(
 		r.Context(),
 		uid,
@@ -169,8 +216,9 @@ func (h *Service) RegisterPasskey(w http.ResponseWriter, r *http.Request) {
 		credentialPublicKey, // This is used as the encryption key
 		credentialID,        // Store the credential ID
 		h.WebAuthn.WebAuthn.Config.RPID,
-		"passkey-derived", // Key derivation method
-		passkeyName,       // User-friendly name
+		keyDerivationMethod, // Method used for key derivation
+		passkeyName,         // User-friendly name
+		prfSalt,             // PRF salt if available
 	)
 
 	if err != nil {
@@ -218,21 +266,83 @@ func (h *Service) GenerateAuthenticationChallenge(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Generate authentication options
-	options, sessionData, err := h.WebAuthn.WebAuthn.BeginLogin(webAuthnUser)
+	// Get PRF salt from active encryption key if available
+	var extensions map[string]interface{}
+	var prfSalt []byte
+	var prfExtension map[string]interface{}
+	var prfEnabled bool
+
+	// Look for keys with PRF support
+	keys, err := h.Encryption.ListKeys(r.Context(), uid)
+	if err == nil {
+		for _, key := range keys {
+			if key.PRFEnabled && key.PRFSalt != "" && key.IsActive {
+				// Found an active key with PRF support
+				decodedSalt, err := base64.StdEncoding.DecodeString(key.PRFSalt)
+				if err == nil {
+					prfSalt = decodedSalt
+					prfEnabled = true
+					break
+				}
+			}
+		}
+	}
+
+	// If PRF is enabled, add PRF extension to challenge
+	if prfEnabled && len(prfSalt) > 0 {
+		prfExtension = map[string]interface{}{
+			"eval": map[string]interface{}{
+				"first": map[string]interface{}{
+					"salt": prfSalt,
+				},
+			},
+		}
+
+		extensions = map[string]interface{}{
+			"prf": prfExtension,
+		}
+	}
+
+	// Generate authentication options with PRF extension if enabled
+	var options *protocol.CredentialAssertion
+	var sessionData *wauthn.SessionData
+
+	if prfEnabled {
+		options, sessionData, err = h.WebAuthn.WebAuthn.BeginLogin(
+			webAuthnUser,
+			wauthn.WithAssertionExtensions(extensions),
+			wauthn.WithLoginRelyingPartyID(h.WebAuthn.WebAuthn.Config.RPID),
+		)
+	} else {
+		options, sessionData, err = h.WebAuthn.WebAuthn.BeginLogin(webAuthnUser)
+	}
+
 	if err != nil {
 		slog.Error("Error generating authentication options", "error", err)
 		http.Error(w, "Failed to generate authentication challenge", http.StatusInternalServerError)
 		return
 	}
 
-	// Store session data in database
+	// Serialize extensions for storage
+	var extensionsJSON string
+	if prfEnabled {
+		extensionsBytes, err := json.Marshal(extensions)
+		if err != nil {
+			slog.Warn("Failed to serialize extensions", "error", err)
+			// Continue anyway, PRF is optional
+		} else {
+			extensionsJSON = string(extensionsBytes)
+		}
+	}
+
+	// Store session data in database with extensions
 	challengeID, err := h.WebAuthn.SaveChallengeToDB(
 		r.Context(),
 		user.ID,
 		sessionData.Challenge,
 		h.WebAuthn.WebAuthn.Config.RPID,
 		"authentication",
+		extensionsJSON,
 	)
 	if err != nil {
 		slog.Error("Error saving challenge to database", "error", err)
@@ -276,11 +386,20 @@ func (h *Service) AuthenticatePasskey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	challenge, err := h.WebAuthn.GetChallengeFromDB(r.Context(), challengeID)
+	challenge, extensionsJSON, err := h.WebAuthn.GetChallengeFromDB(r.Context(), challengeID)
 	if err != nil {
 		slog.Error("Error retrieving challenge", "error", err)
 		http.Error(w, "Invalid or expired challenge", http.StatusBadRequest)
 		return
+	}
+
+	// Parse extensions JSON if available
+	var extensions map[string]interface{}
+	if extensionsJSON != "" {
+		if err := json.Unmarshal([]byte(extensionsJSON), &extensions); err != nil {
+			slog.Warn("Error parsing extensions JSON", "error", err)
+			// Continue anyway - PRF is optional
+		}
 	}
 
 	// Get WebAuthn user with credentials
@@ -308,6 +427,7 @@ func (h *Service) AuthenticatePasskey(w http.ResponseWriter, r *http.Request) {
 
 	// Authentication successful - update last used timestamp for the key
 	keyID := fmt.Sprintf("passkey-%s", base64.StdEncoding.EncodeToString(credential.ID))
+
 	if err := h.Encryption.UpdateKeyLastUsed(r.Context(), user.ID, keyID); err != nil {
 		slog.Warn("Failed to update key last used timestamp", "error", err)
 		// Continue anyway - this is just a timestamp update
@@ -345,30 +465,9 @@ func (h *Service) ListPasskeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Filter keys that are passkey-derived and convert to response format
-	var keyItems []rp.KeyListItem
-	for _, key := range keys {
-		// Only include passkey-derived keys
-		if key.KeyDerivationMethod == "passkey-derived" && key.CredentialID != "" {
-			keyItem := rp.KeyListItem{
-				KeyID:               key.KeyID,
-				CreatedAt:           key.CreatedAt,
-				LastUsedAt:          key.LastUsedAt,
-				IsActive:            key.IsActive,
-				Version:             key.KeyVersion,
-				CredentialID:        key.CredentialID,
-				KeyDerivationMethod: key.KeyDerivationMethod,
-				// Note: We don't currently store passkey names separately
-				// We could extract this from the key.KeyID or add a new field in the database
-				PasskeyName: fmt.Sprintf("Passkey %d", key.KeyVersion),
-			}
-			keyItems = append(keyItems, keyItem)
-		}
-	}
-
 	// Return the response
 	response := rp.ListKeysResponse{
-		Keys: keyItems,
+		Keys: keys,
 	}
 	rp.RespondWithJSON(w, http.StatusOK, response)
 }
