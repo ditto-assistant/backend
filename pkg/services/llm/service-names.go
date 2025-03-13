@@ -2,11 +2,14 @@ package llm
 
 type ServiceName string
 
-// Text Embeddings
+// Google Embedding Models
 const (
-	// ModelTextEmbedding004 is Google's embedding model.
 	ModelTextEmbedding004 ServiceName = "text-embedding-004"
-	// ModelTextEmbedding3Small is OpenAI's embedding model.
+	ModelTextEmbedding005 ServiceName = "text-embedding-005"
+)
+
+// OpenAI Embedding Models
+const (
 	ModelTextEmbedding3Small ServiceName = "text-embedding-3-small"
 )
 
@@ -30,6 +33,10 @@ const (
 	ModelFlux1Pro ServiceName = "flux-1-pro"
 	// ModelFlux1Dev is BFL's FLUX.1 Dev model
 	ModelFlux1Dev ServiceName = "flux-1-dev"
+	// ModelCerebrasLlama8B is Cerebras' Llama 3.1 8B model
+	ModelCerebrasLlama8B ServiceName = "llama3.1-8b"
+	// ModelCerebrasLlama70B is Cerebras' Llama 3.3 70B model
+	ModelCerebrasLlama70B ServiceName = "llama-3.3-70b"
 )
 
 // Anthropic Models

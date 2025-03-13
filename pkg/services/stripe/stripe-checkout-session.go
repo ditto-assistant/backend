@@ -14,6 +14,11 @@ import (
 	"github.com/stripe/stripe-go/v80/checkout/session"
 )
 
+func (cl *Client) Routes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /v1/stripe/checkout-session", cl.CreateCheckoutSession)
+	mux.HandleFunc("POST /v1/stripe/webhook", cl.HandleWebhook)
+}
+
 type Client struct {
 	secr          *secr.Client
 	auth          *authfirebase.Client
@@ -31,10 +36,6 @@ type requestCreateCheckoutSession struct {
 	SuccessURL *string `json:"successURL"`
 	CancelURL  *string `json:"cancelURL"`
 	USD        int64   `json:"usd"`
-}
-
-func (r requestCreateCheckoutSession) GetUserID() string {
-	return r.UserID
 }
 
 const secretKeyId = "STRIPE_SECRET_KEY"
@@ -57,7 +58,7 @@ func (cl *Client) setupCheckoutSession(ctx context.Context) error {
 		return err
 	}
 	stripe.Key = stripeKey
-	slog.Debug("stripe secret key set", "secret_id", secretKeyId)
+	slog.Debug("loaded stripe secret key", "secret_id", secretKeyId)
 	return nil
 }
 
@@ -66,36 +67,28 @@ func (cl *Client) CreateCheckoutSession(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Parse the form data
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	// Get authorization from form
-	authHeader := r.FormValue("authorization")
-	r.Header.Set("Authorization", authHeader)
-	tok, err := cl.auth.VerifyToken(r)
+	tok, err := cl.auth.VerifyTokenFromForm(r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return
 	}
-	// Parse form values into our request struct
+	userID := r.FormValue("userID")
+	err = tok.Check(userID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnauthorized)
+		return
+	}
 	usd, err := strconv.ParseInt(r.FormValue("usd"), 10, 64)
 	if err != nil {
 		http.Error(w, "invalid USD amount", http.StatusBadRequest)
 		return
 	}
 	bod := requestCreateCheckoutSession{
-		UserID:     r.FormValue("userID"),
+		UserID:     userID,
 		Email:      ptr(r.FormValue("email")),
 		SuccessURL: ptr(r.FormValue("successURL")),
 		CancelURL:  ptr(r.FormValue("cancelURL")),
 		USD:        usd,
-	}
-	err = tok.Check(bod)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
-		return
 	}
 
 	var priceID string

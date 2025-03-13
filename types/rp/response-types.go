@@ -7,23 +7,25 @@ import (
 	"strings"
 	"time"
 
+	"cloud.google.com/go/firestore"
 	"github.com/ditto-assistant/backend/cfg/envs"
 	"github.com/ditto-assistant/backend/pkg/services/filestorage"
 	"golang.org/x/sync/errgroup"
 )
 
 type BalanceV1 struct {
-	BalanceRaw         int64  `json:"balanceRaw"`
-	Balance            string `json:"balance"`
-	USD                string `json:"usd"`
-	Images             string `json:"images"`
-	ImagesRaw          int64  `json:"imagesRaw"`
-	Searches           string `json:"searches"`
-	SearchesRaw        int64  `json:"searchesRaw"`
-	DropAmountRaw      int64  `json:"dropAmountRaw,omitempty"`
-	DropAmount         string `json:"dropAmount,omitempty"`
-	TotalAirdroppedRaw int64  `json:"totalAirdroppedRaw,omitempty"`
-	TotalAirdropped    string `json:"totalAirdropped,omitempty"`
+	BalanceRaw         int64      `json:"balanceRaw"`
+	Balance            string     `json:"balance"`
+	USD                string     `json:"usd"`
+	Images             string     `json:"images"`
+	ImagesRaw          int64      `json:"imagesRaw"`
+	Searches           string     `json:"searches"`
+	SearchesRaw        int64      `json:"searchesRaw"`
+	DropAmountRaw      int64      `json:"dropAmountRaw,omitempty"`
+	DropAmount         string     `json:"dropAmount,omitempty"`
+	TotalAirdroppedRaw int64      `json:"totalAirdroppedRaw,omitempty"`
+	TotalAirdropped    string     `json:"totalAirdropped,omitempty"`
+	LastAirdropAt      *time.Time `json:"lastAirdropAt,omitempty"`
 }
 
 func (BalanceV1) Zeroes() BalanceV1 {
@@ -40,14 +42,16 @@ func (BalanceV1) Zeroes() BalanceV1 {
 
 // Memory represents a conversation memory with vector similarity
 type Memory struct {
-	ID             string    `json:"id"`
-	Score          float32   `json:"score"`
-	Prompt         string    `json:"prompt" firestore:"prompt"`
-	Response       string    `json:"response" firestore:"response"`
-	Timestamp      time.Time `json:"timestamp" firestore:"timestamp"`
-	VectorDistance float32   `json:"vector_distance" firestore:"vector_distance"`
-	// Will be used for depth-based vector memory
-	// EmbeddingVector firestore.Vector32 `json:"-" firestore:"embedding_vector"`
+	ID                 string             `json:"id"`
+	Score              float32            `json:"score"`
+	Prompt             string             `json:"prompt" firestore:"prompt"`
+	Response           string             `json:"response" firestore:"response"`
+	Timestamp          time.Time          `json:"timestamp" firestore:"timestamp"`
+	VectorDistance     float32            `json:"vector_distance" firestore:"vector_distance"`
+	EmbeddingPrompt5   firestore.Vector32 `json:"-" firestore:"embedding_prompt_5"`
+	EmbeddingResponse5 firestore.Vector32 `json:"-" firestore:"embedding_response_5"`
+	Depth              int                `json:"depth" firestore:"-"`
+	Children           []Memory           `json:"children,omitempty" firestore:"-"`
 }
 
 // MemoriesV1 represents the response for getting memories
@@ -60,37 +64,32 @@ type MemoriesV2 struct {
 	ShortTerm []Memory `json:"shortTerm"`
 }
 
-func (mem *Memory) FormatResponse() {
+func FormatToolsResponse(response *string) {
 	switch {
-	case strings.Contains(mem.Response, "Script Generated and Downloaded.**"):
-		parts := strings.Split(mem.Response, "- Task:")
+	case strings.Contains(*response, "Script Generated and Downloaded.**"):
+		parts := strings.Split(*response, "- Task:")
 		if len(parts) > 1 {
 			if strings.Contains(parts[0], "HTML") {
-				mem.Response = "<HTML_SCRIPT>" + parts[1]
+				*response = "<HTML_SCRIPT>" + parts[1]
 			} else if strings.Contains(parts[0], "OpenSCAD") {
-				mem.Response = "<OPENSCAD>" + parts[1]
+				*response = "<OPENSCAD>" + parts[1]
 			}
 		}
-	case strings.Contains(mem.Response, "Image Task:"):
-		parts := strings.Split(mem.Response, "Image Task:")
+	case strings.Contains(*response, "Image Task:"):
+		parts := strings.Split(*response, "Image Task:")
 		if len(parts) > 1 {
-			mem.Response = "<IMAGE_GENERATION>" + parts[1]
+			*response = "<IMAGE_GENERATION>" + parts[1]
 		}
-	case strings.Contains(mem.Response, "Google Search Query:"):
-		parts := strings.Split(mem.Response, "Google Search Query:")
+	case strings.Contains(*response, "Google Search Query:"):
+		parts := strings.Split(*response, "Google Search Query:")
 		if len(parts) > 1 {
-			mem.Response = "<GOOGLE_SEARCH>" + parts[1]
-		}
-	case strings.Contains(mem.Response, "Home Assistant Task:"):
-		parts := strings.Split(mem.Response, "Home Assistant Task:")
-		if len(parts) > 1 {
-			cleaned := strings.TrimSpace(strings.ReplaceAll(
-				strings.ReplaceAll(parts[1], "Task completed successfully.", ""),
-				"Task failed.", "",
-			))
-			mem.Response = "<GOOGLE_HOME> " + cleaned
+			*response = "<GOOGLE_SEARCH>" + parts[1]
 		}
 	}
+}
+
+func (mem *Memory) FormatResponse() {
+	FormatToolsResponse(&mem.Response)
 }
 
 func (mem *Memory) StripImages() {
@@ -157,6 +156,7 @@ func TrimStuff(s *string, prefix, suffix string, replaceFunc func(*string) error
 			result = result[:resultIdx] + result[resultIdx+len(prefix)+len(afterPrefix[:closeIdx])+len(suffix):]
 		} else {
 			url := afterPrefix[:closeIdx]
+			url = strings.TrimSuffix(url, "\n") // Trim any trailing newlines that might have been added
 			err := replaceFunc(&url)
 			if err != nil {
 				return err
@@ -170,7 +170,7 @@ func TrimStuff(s *string, prefix, suffix string, replaceFunc func(*string) error
 }
 
 func (mem *Memory) String() string {
-	return fmt.Sprintf("User (%s): %s\nDitto: %s\n",
+	return fmt.Sprintf("**Memory (%s)**\n\n**User:**\n%s\n\n**Ditto:**\n%s\n\n",
 		mem.Timestamp.Format("2006-01-02 15:04:05"),
 		mem.Prompt,
 		mem.Response,
@@ -179,23 +179,37 @@ func (mem *Memory) String() string {
 
 func (m MemoriesV2) Bytes() []byte {
 	var b bytes.Buffer
+	b.WriteString("# Memories\n\n")
 	if len(m.LongTerm) > 0 {
-		b.WriteString("## Long Term Memory\n")
-		b.WriteString("- Most relevant prompt/response pairs from the user's prompt history are indexed using cosine similarity and are shown below.\n")
-		b.WriteString("<LongTermMemory>\n")
+		b.WriteString("## Long-Term Memory (Cosine Similarity)\n\n")
+		b.WriteString("*Most relevant prompt/response pairs from user's prompt history*\n\n")
 		for _, mem := range m.LongTerm {
-			b.WriteString(mem.String())
+			writeMemoryWithChildren(&b, &mem, 0)
 		}
-		b.WriteString("</LongTermMemory>\n\n")
+		b.WriteRune('\n')
 	}
 	if len(m.ShortTerm) > 0 {
-		b.WriteString("## Short Term Memory\n")
-		b.WriteString("- Most recent prompt/response pairs are shown below.\n")
-		b.WriteString("<ShortTermMemory>\n")
+		b.WriteString("## Short-Term Memory (Recent)\n\n")
+		b.WriteString("*Most recent prompt/response pairs*\n\n")
 		for _, mem := range m.ShortTerm {
 			b.WriteString(mem.String())
 		}
-		b.WriteString("</ShortTermMemory>\n\n")
+		b.WriteRune('\n')
 	}
 	return b.Bytes()
+}
+
+// writeMemoryWithChildren recursively writes a memory and its children using markdown.
+func writeMemoryWithChildren(b *bytes.Buffer, mem *Memory, indent int) {
+	headingLevel := min(3+mem.Depth, 6)
+	headingMarks := strings.Repeat("#", headingLevel)
+	fmt.Fprintf(b, "%s Memory Layer (Depth %d)\n\n", headingMarks, mem.Depth)
+	b.WriteString(mem.String())
+	if len(mem.Children) > 0 {
+		fmt.Fprintf(b, "%s Related Memories\n\n", strings.Repeat("#", headingLevel+1))
+		for _, child := range mem.Children {
+			writeMemoryWithChildren(b, &child, indent+1)
+		}
+		b.WriteRune('\n')
+	}
 }

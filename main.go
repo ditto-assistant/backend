@@ -21,12 +21,11 @@ import (
 	"github.com/ditto-assistant/backend/pkg/services/db"
 	"github.com/ditto-assistant/backend/pkg/services/db/users"
 	"github.com/ditto-assistant/backend/pkg/services/llm"
+	"github.com/ditto-assistant/backend/pkg/services/llm/cerebras"
 	"github.com/ditto-assistant/backend/pkg/services/llm/claude"
 	"github.com/ditto-assistant/backend/pkg/services/llm/gemini"
-	"github.com/ditto-assistant/backend/pkg/services/llm/googai"
 	"github.com/ditto-assistant/backend/pkg/services/llm/llama"
 	"github.com/ditto-assistant/backend/pkg/services/llm/mistral"
-	"github.com/ditto-assistant/backend/pkg/services/llm/openai"
 	"github.com/ditto-assistant/backend/pkg/services/llm/openai/dalle"
 	"github.com/ditto-assistant/backend/pkg/services/llm/openai/gpt"
 	"github.com/ditto-assistant/backend/pkg/services/search"
@@ -36,24 +35,19 @@ import (
 	"github.com/ditto-assistant/backend/pkg/web"
 	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/ditto-assistant/backend/types/ty"
-	"github.com/firebase/genkit/go/plugins/vertexai"
 )
 
 func main() {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 	bgCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var shutdownWG sync.WaitGroup
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGINT)
-	if err := vertexai.Init(bgCtx, &vertexai.Config{
-		ProjectID: "ditto-app-dev",
-		Location:  "us-central1",
-	}); err != nil {
-		log.Fatal(err)
-	}
 	sdCtx := ty.ShutdownContext{
-		Background: bgCtx,
-		WaitGroup:  &shutdownWG,
+		Background:       bgCtx,
+		WaitGroup:        &shutdownWG,
+		ShutdownDuration: 30 * time.Second,
 	}
 	coreSvc, err := core.NewClient(bgCtx)
 	if err != nil {
@@ -62,29 +56,20 @@ func main() {
 	if err := db.Setup(bgCtx, &shutdownWG, db.ModeCloud); err != nil {
 		log.Fatalf("failed to initialize database: %s", err)
 	}
+
 	mux := http.NewServeMux()
 	searchClient := search.NewClient(
 		search.WithService(brave.NewService(sdCtx, coreSvc.Secr)),
 		search.WithService(google.NewService(sdCtx, coreSvc.Secr)),
 	)
 	dalleClient := dalle.NewClient(secr.OPENAI_DALLE_API_KEY.String(), llm.HttpClient)
-	v1Client := apiv1.NewService(sdCtx, coreSvc, apiv1.ServiceClients{
+	apiv1.NewService(sdCtx, coreSvc, apiv1.ServiceClients{
 		SearchClient: searchClient,
-		S3:           coreSvc.FileStorage.S3,
 		Dalle:        dalleClient,
-	})
-	stripeClient := stripe.NewClient(coreSvc.Secr, coreSvc.Auth)
-	mux.HandleFunc("GET /v1/balance", v1Client.Balance)
-	mux.HandleFunc("POST /v1/create-upload-url", v1Client.CreateUploadURL)
-	mux.HandleFunc("POST /v1/google-search", v1Client.WebSearch)
-	mux.HandleFunc("POST /v1/generate-image", v1Client.GenerateImage)
-	mux.HandleFunc("POST /v1/presign-url", v1Client.PresignURL)
-	mux.HandleFunc("POST /v1/get-memories", v1Client.GetMemories)
-	mux.HandleFunc("POST /v1/stripe/checkout-session", stripeClient.CreateCheckoutSession)
-	mux.HandleFunc("POST /v1/stripe/webhook", stripeClient.HandleWebhook)
-
-	v2Client := apiv2.NewService(coreSvc)
-	v2Client.Routes(mux)
+	}).Routes(mux)
+	stripe.NewClient(coreSvc.Secr, coreSvc.Auth).Routes(mux)
+	apiv2.NewService(coreSvc, sdCtx).Routes(mux)
+	cerebrasClient := cerebras.NewService(&sdCtx, coreSvc.Secr)
 
 	webClient := web.NewClient(coreSvc)
 	webClient.Routes(mux)
@@ -101,20 +86,19 @@ func main() {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		err = tok.Check(bod)
+		err = tok.Check(bod.UserID)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
-		slog := slog.With("user_id", bod.UserID, "model", bod.Model)
-		slog.Debug("Prompt Request")
 		user := users.User{UID: bod.UserID}
 		ctx := r.Context()
-		if err := user.Get(ctx); err != nil {
+		if err := user.GetByUID(ctx, db.D); err != nil {
 			slog.Error("failed to get user", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		slog := slog.With("action", "prompt", "userID", bod.UserID, "model", bod.Model, "email", user.Email.String)
 		// llama32 is free
 		if user.Balance <= 0 && bod.Model != llm.ModelLlama32 {
 			slog.Error("user balance is 0", "balance", user.Balance)
@@ -177,6 +161,13 @@ func main() {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
+		case llm.ModelCerebrasLlama8B, llm.ModelCerebrasLlama70B:
+			err = cerebrasClient.Prompt(ctx, bod, &rsp)
+			if err != nil {
+				slog.Error("failed to prompt "+bod.Model.String(), "error", err)
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 		default:
 			slog.Info("unsupported model", "model", bod.Model)
 			http.Error(w, fmt.Sprintf("unsupported model: %s", bod.Model), http.StatusBadRequest)
@@ -184,18 +175,15 @@ func main() {
 		}
 		for token := range rsp.Text {
 			if token.Err != nil {
+				slog.Error("failed to stream token", "error", token.Err)
 				http.Error(w, token.Err.Error(), http.StatusInternalServerError)
 				return
 			}
 			fmt.Fprint(w, token.Ok)
 		}
 
-		shutdownWG.Add(1)
-		go func() {
-			slog.Info("inserting receipt", "input_tokens", rsp.InputTokens, "output_tokens", rsp.OutputTokens)
-			defer shutdownWG.Done()
-			ctx, cancel := context.WithTimeout(bgCtx, 15*time.Second)
-			defer cancel()
+		sdCtx.Run(func(ctx context.Context) {
+			slog.Debug("receipt", "input_tokens", rsp.InputTokens, "output_tokens", rsp.OutputTokens)
 			receipt := db.Receipt{
 				UserID:       user.ID,
 				InputTokens:  int64(rsp.InputTokens),
@@ -205,108 +193,14 @@ func main() {
 			if err := receipt.Insert(ctx); err != nil {
 				slog.Error("failed to insert receipt", "error", err)
 			}
-		}()
+		})
 	})
 
-	// - MARK: embed
-	mux.HandleFunc("POST /v1/embed", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := coreSvc.Auth.VerifyToken(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		var bod rq.EmbedV1
-		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		err = tok.Check(bod)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-
-		}
-		user := users.User{UID: bod.UserID}
-		ctx := r.Context()
-		if err := user.Get(ctx); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		var embedding llm.Embedding
-		if bod.Model == llm.ModelTextEmbedding3Small {
-			embedding, err = openai.GenerateEmbedding(ctx, bod.Text, bod.Model)
-		} else {
-			if bod.Model == "" {
-				bod.Model = llm.ModelTextEmbedding004
-			}
-			embedding, err = googai.GenerateEmbedding(ctx, bod.Text, bod.Model)
-		}
-
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(embedding)
-
-		shutdownWG.Add(1)
-		go func() {
-			defer shutdownWG.Done()
-			ctx, cancel := context.WithTimeout(bgCtx, 15*time.Second)
-			defer cancel()
-			receipt := db.Receipt{
-				UserID:      user.ID,
-				TotalTokens: int64(llm.EstimateTokens(bod.Text)),
-				ServiceName: bod.Model,
-			}
-			if err := receipt.Insert(ctx); err != nil {
-				slog.Error("failed to insert receipt", "error", err)
-			}
-		}()
-	})
-
-	// - MARK: search-examples
-	mux.HandleFunc("POST /v1/search-examples", func(w http.ResponseWriter, r *http.Request) {
-		tok, err := coreSvc.Auth.VerifyToken(r)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-			return
-		}
-		var bod rq.SearchExamplesV1
-		if err := json.NewDecoder(r.Body).Decode(&bod); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		err = tok.Check(bod)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnauthorized)
-		}
-		if bod.K == 0 {
-			bod.K = 5
-		}
-		ctx := r.Context()
-		examples, err := db.SearchExamples(ctx, bod.Embedding, db.WithK(bod.K))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		// Format response
-		w.Write([]byte{'\n'})
-		for i, example := range examples {
-			fmt.Fprintf(w, "Example %d\n", i+1)
-			fmt.Fprintf(w, "User's Prompt: %s\nDitto:\n%s\n\n", example.Prompt, example.Response)
-		}
-	})
-
-	corsMiddleware := middleware.NewCors()
-	handler := corsMiddleware.Handler(mux)
+	handler := middleware.NewCors().Handler(mux)
 	server := &http.Server{
 		Addr:    ":3400",
 		Handler: handler,
 	}
-
 	go func() {
 		select {
 		case sig := <-sigChan:
@@ -314,7 +208,6 @@ func main() {
 			server.Shutdown(bgCtx)
 		}
 	}()
-
 	slog.Debug("Starting server", "addr", server.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("Server error: %v", err)

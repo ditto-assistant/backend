@@ -3,19 +3,15 @@ package rq
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
+	"cloud.google.com/go/firestore"
 	"github.com/ditto-assistant/backend/pkg/services/llm"
 )
-
-type HasUserID interface {
-	GetUserID() string
-}
 
 type ChatV2 struct {
 	UserID string `json:"userID"`
 }
-
-func (c ChatV2) GetUserID() string { return c.UserID }
 
 type PromptV1 struct {
 	UserID       string          `json:"userID"`
@@ -26,15 +22,11 @@ type PromptV1 struct {
 	Images       []string        `json:"images,omitempty"`
 }
 
-func (p PromptV1) GetUserID() string { return p.UserID }
-
 type SearchV1 struct {
 	UserID     string `json:"userID"`
 	Query      string `json:"query"`
 	NumResults int    `json:"numResults"`
 }
-
-func (s SearchV1) GetUserID() string { return s.UserID }
 
 type EmbedV1 struct {
 	UserID string          `json:"userID"`
@@ -42,12 +34,17 @@ type EmbedV1 struct {
 	Model  llm.ServiceName `json:"model"`
 }
 
-func (e EmbedV1) GetUserID() string { return e.UserID }
+type CreatePromptV1 struct {
+	UserID   string `json:"userID"`
+	DeviceID string `json:"deviceID"`
+	Prompt   string `json:"prompt"`
+}
 
 type GenerateImageV1 struct {
-	UserID string          `json:"userID"`
-	Prompt string          `json:"prompt"`
-	Model  llm.ServiceName `json:"model"`
+	UserID    string          `json:"userID"`
+	Prompt    string          `json:"prompt"`
+	Model     llm.ServiceName `json:"model"`
+	DummyMode bool            `json:"dummyMode"`
 
 	// DALL-E specific fields
 	Size string `json:"size,omitempty"`
@@ -60,22 +57,20 @@ type GenerateImageV1 struct {
 	SafetyTolerance  int    `json:"safetyTolerance,omitempty"`
 }
 
-func (g GenerateImageV1) GetUserID() string { return g.UserID }
-
 type SearchExamplesV1 struct {
 	UserID    string        `json:"userID"`
+	PairID    string        `json:"pairID"`
 	Embedding llm.Embedding `json:"embedding"`
 	K         int           `json:"k"`
 }
 
-func (s SearchExamplesV1) GetUserID() string { return s.UserID }
-
 type BalanceV1 struct {
-	UserID string `json:"userID"`
-	Email  string `json:"email"`
+	UserID   string `json:"userID"`
+	Email    string `json:"email"`
+	Version  string `json:"version"`
+	Platform int    `json:"platform"`
+	DeviceID string `json:"deviceId"`
 }
-
-func (b BalanceV1) GetUserID() string { return b.UserID }
 
 func (b *BalanceV1) FromQuery(r *http.Request) error {
 	uid := r.URL.Query().Get("userID")
@@ -84,6 +79,12 @@ func (b *BalanceV1) FromQuery(r *http.Request) error {
 	}
 	b.UserID = uid
 	b.Email = r.URL.Query().Get("email")
+	b.Version = r.URL.Query().Get("version")
+	b.Platform, _ = strconv.Atoi(r.URL.Query().Get("platform"))
+	b.DeviceID = r.URL.Query().Get("deviceID")
+	if b.DeviceID == "" {
+		b.DeviceID = r.URL.Query().Get("deviceId")
+	}
 	return nil
 }
 
@@ -93,21 +94,15 @@ type PresignedURLV1 struct {
 	Folder string `json:"folder"`
 }
 
-func (p PresignedURLV1) GetUserID() string { return p.UserID }
-
 type CreateUploadURLV1 struct {
 	UserID string `json:"userID"`
 }
-
-func (c CreateUploadURLV1) GetUserID() string { return c.UserID }
 
 type GetMemoriesV1 struct {
 	UserID string    `json:"userID"`
 	Vector []float32 `json:"vector"`
 	K      int       `json:"k,omitempty"`
 }
-
-func (g GetMemoriesV1) GetUserID() string { return g.UserID }
 
 type GetMemoriesV2 struct {
 	UserID      string                     `json:"userID"`
@@ -116,13 +111,64 @@ type GetMemoriesV2 struct {
 	StripImages bool                       `json:"stripImages"`
 }
 
+func (req *GetMemoriesV2) TotalRequestedMemories() int {
+	memoriesRequested := 0
+	if req.ShortTerm != nil {
+		memoriesRequested = req.ShortTerm.K
+	}
+	for _, nc := range req.LongTerm.NodeCounts {
+		memoriesRequested += nc
+	}
+	return memoriesRequested
+}
+
 type ParamsLongTermMemoriesV2 struct {
-	Vector     []float32 `json:"vector"`
-	NodeCounts []int     `json:"nodeCounts"`
+	PairID         string             `json:"pairID"`
+	Vector         firestore.Vector32 `json:"vector"`
+	NodeCounts     []int              `json:"nodeCounts"`
+	NodeThresholds []float64          `json:"nodeThresholds"`
+	// SkipShortTermContext skips the normalized vector summation of short-term memories.
+	SkipShortTermContext bool `json:"skipShortTermContext"`
 }
 
 type ParamsShortTermMemoriesV2 struct {
 	K int `json:"k"`
 }
 
-func (g *GetMemoriesV2) GetUserID() string { return g.UserID }
+type FeedbackV1 struct {
+	UserID   string
+	DeviceID string
+	Version  string
+	Type     string // bug, feature-request, other
+	Feedback string
+}
+
+func (f *FeedbackV1) FromForm(r *http.Request) error {
+	f.UserID = r.FormValue("userID")
+	if f.UserID == "" {
+		return errors.New("userID is required")
+	}
+	f.DeviceID = r.FormValue("deviceID")
+	if f.DeviceID == "" {
+		return errors.New("deviceID is required")
+	}
+	f.Version = r.FormValue("version")
+	if f.Version == "" {
+		return errors.New("version is required")
+	}
+	f.Type = r.FormValue("type")
+	if f.Type == "" {
+		return errors.New("type is required")
+	}
+	f.Feedback = r.FormValue("feedback")
+	if f.Feedback == "" {
+		return errors.New("feedback is required")
+	}
+	return nil
+}
+
+type SaveResponseV1 struct {
+	UserID   string `json:"userID"`
+	PairID   string `json:"pairID"`
+	Response string `json:"response"`
+}

@@ -5,80 +5,113 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"time"
 
-	"github.com/ditto-assistant/backend/pkg/services/db"
 	"github.com/ditto-assistant/backend/pkg/utils/numfmt"
 	"github.com/ditto-assistant/backend/types/rp"
 	"github.com/ditto-assistant/backend/types/rq"
+	"github.com/omniaura/mapcache"
 )
 
+//go:generate stringer -type=Platform
+
+type Platform int
+
+const (
+	PlatformWeb Platform = iota
+	PlatformAndroid
+	PlatformiOS
+	PlatformLinux
+	PlatformMacOS
+	PlatformUnknown
+	PlatformWindows
+)
+
+var cacheBalance, _ = mapcache.New[rq.BalanceV1, rp.BalanceV1](mapcache.WithTTL(10 * time.Second))
+
 // GetBalance manages the entire balance check flow including airdrops
-func GetBalance(ctx context.Context, req rq.BalanceV1) (rp.BalanceV1, error) {
-	if req.Email == "" {
-		return getBalance(ctx, WithUserID(req.UserID))
+func GetBalance(r *http.Request, d *sql.DB, req rq.BalanceV1) (rp.BalanceV1, error) {
+	return cacheBalance.Get(req, func() (rp.BalanceV1, error) {
+		ctx := r.Context()
+		res, err := handleAirdrop(ctx, d, req)
+		if err != nil {
+			return rp.BalanceV1{}, fmt.Errorf("failed to handle airdrop: %w", err)
+		}
+		if err := handleDeviceID(r, d, req, res.ID); err != nil {
+			return rp.BalanceV1{}, err
+		}
+		balance, err := getBalance(ctx, d, res)
+		if err != nil {
+			return rp.BalanceV1{}, fmt.Errorf("failed to get user balance: %w", err)
+		}
+		return balance, nil
+	})
+}
+
+func handleDeviceID(r *http.Request, d *sql.DB, req rq.BalanceV1, id int64) error {
+	if req.DeviceID == "" {
+		return nil
 	}
-	res, err := handleAirdrop(ctx, req)
+	ctx := r.Context()
+	userAgent := r.Header.Get("User-Agent")
+	acceptLanguage := r.Header.Get("Accept-Language")
+	device := UserDevice{
+		UserID:    id,
+		DeviceUID: req.DeviceID,
+		Version:   req.Version,
+		Platform:  Platform(req.Platform),
+		UserAgent: sql.NullString{
+			String: userAgent,
+			Valid:  userAgent != "",
+		},
+		AcceptLanguage: sql.NullString{
+			String: acceptLanguage,
+			Valid:  acceptLanguage != "",
+		},
+	}
+	slog := slog.With(
+		"device", device.DeviceUID,
+		"version", device.Version,
+		"platform", device.Platform,
+		"userID", req.UserID,
+		"email", req.Email,
+	)
+	exists, err := device.Exists(ctx, d)
 	if err != nil {
-		return rp.BalanceV1{}, fmt.Errorf("failed to handle airdrop: %w", err)
+		return fmt.Errorf("failed to check if device exists: %w", err)
 	}
-	balance, err := getBalance(ctx, WithID(res.ID))
-	if err != nil {
-		return rp.BalanceV1{}, fmt.Errorf("failed to get user balance: %w", err)
+	if exists {
+		slog.Debug("device online")
+		return device.UpdateLastSignIn(ctx, d)
 	}
-	if res.DropAmount > 0 {
-		slog.Info("airdropped tokens", "uid", req.UserID, "tokens", res.DropAmount)
-		balance.DropAmountRaw = res.DropAmount
-		balance.DropAmount = numfmt.LargeNumber(res.DropAmount)
+	if device.Version != req.Version &&
+		device.DeviceUID == req.DeviceID {
+		slog.Debug("user updated device", "new_version", req.Version)
+	} else {
+		slog.Debug("new device")
 	}
-	return balance, nil
+	if err := device.Insert(ctx, d); err != nil {
+		return fmt.Errorf("failed to insert device: %w", err)
+	}
+	return nil
 }
 
-type requestGetUserBalance struct {
-	ID     *int64
-	UserID *string
-}
-
-type requestGetUserBalanceOption func(*requestGetUserBalance)
-
-func WithID(id int64) requestGetUserBalanceOption {
-	return func(req *requestGetUserBalance) {
-		req.ID = &id
-	}
-}
-
-func WithUserID(userID string) requestGetUserBalanceOption {
-	return func(req *requestGetUserBalance) {
-		req.UserID = &userID
-	}
-}
-
-func getBalance(ctx context.Context, opts ...requestGetUserBalanceOption) (rp.BalanceV1, error) {
-	var req requestGetUserBalance
-	for _, opt := range opts {
-		opt(&req)
-	}
+func getBalance(ctx context.Context, d *sql.DB, airdrop *resultAirdrop) (rp.BalanceV1, error) {
 	var q struct {
-		Balance         int64
-		TotalAirdropped int64
-		Images          float64
-		Searches        float64
-		Dollars         float64
+		Balance, TotalAirdropped  int64
+		Images, Searches, Dollars float64
+		LastAirdropAt             sql.NullTime
 	}
-	const mainQuery = `
+	err := d.QueryRowContext(ctx, `
 		SELECT users.balance,
 			   users.total_tokens_airdropped,
+			   users.last_airdrop_at,
 			   CAST(users.balance AS FLOAT) / (SELECT CAST(count AS FLOAT) FROM tokens_per_unit WHERE name = 'dollar'),
 			   (users.balance / (SELECT count FROM tokens_per_unit WHERE name = 'image')),
 			   (users.balance / (SELECT count FROM tokens_per_unit WHERE name = 'search'))
-		FROM users`
-	var err error
-	if req.ID != nil {
-		err = db.D.QueryRowContext(ctx, mainQuery+" WHERE id = ?", req.ID).
-			Scan(&q.Balance, &q.TotalAirdropped, &q.Dollars, &q.Images, &q.Searches)
-	} else if req.UserID != nil {
-		err = db.D.QueryRowContext(ctx, mainQuery+" WHERE uid = ?", req.UserID).
-			Scan(&q.Balance, &q.TotalAirdropped, &q.Dollars, &q.Images, &q.Searches)
-	}
+		FROM users WHERE id = ?`, airdrop.ID).
+		Scan(&q.Balance, &q.TotalAirdropped, &q.LastAirdropAt, &q.Dollars, &q.Images, &q.Searches)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return rp.BalanceV1{}.Zeroes(), nil
@@ -96,6 +129,14 @@ func getBalance(ctx context.Context, opts ...requestGetUserBalanceOption) (rp.Ba
 	if q.TotalAirdropped > 0 {
 		rsp.TotalAirdroppedRaw = q.TotalAirdropped
 		rsp.TotalAirdropped = numfmt.LargeNumber(q.TotalAirdropped)
+	}
+	if airdrop.DropAmount > 0 {
+		slog.Info("airdropped tokens", "uid", airdrop.ID, "tokens", airdrop.DropAmount)
+		rsp.DropAmountRaw = airdrop.DropAmount
+		rsp.DropAmount = numfmt.LargeNumber(airdrop.DropAmount)
+	}
+	if q.LastAirdropAt.Valid {
+		rsp.LastAirdropAt = &q.LastAirdropAt.Time
 	}
 	return rsp, nil
 }

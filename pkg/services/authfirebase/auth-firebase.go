@@ -1,13 +1,13 @@
 package authfirebase
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 
 	"firebase.google.com/go/v4/auth"
-	"github.com/ditto-assistant/backend/types/rq"
 )
 
 type Client struct {
@@ -20,26 +20,35 @@ func NewClient(auth *auth.Client) *Client {
 
 type AuthToken auth.Token
 
+func (a *Client) VerifyTokenFromForm(r *http.Request) (*AuthToken, error) {
+	token := r.FormValue("authorization")
+	return a.verifyToken(r.Context(), token)
+}
+
 func (a *Client) VerifyToken(r *http.Request) (*AuthToken, error) {
-	authHeader := r.Header.Get("Authorization")
-	if authHeader == "" {
+	token := r.Header.Get("Authorization")
+	return a.verifyToken(r.Context(), token)
+}
+
+func (r *AuthToken) Check(uid string) error {
+	if r.UID != uid {
+		return fmt.Errorf("user ID does not match: header: %s != body: %s", r.UID, uid)
+	}
+	return nil
+}
+
+func (a *Client) verifyToken(ctx context.Context, idToken string) (*AuthToken, error) {
+	if idToken == "" {
 		return nil, errors.New("authorization header is required but not provided")
 	}
 	const bearerPrefix = "bearer "
-	if !strings.HasPrefix(strings.ToLower(authHeader), bearerPrefix) {
+	if !strings.HasPrefix(strings.ToLower(idToken), bearerPrefix) {
 		return nil, errors.New("invalid authorization header format")
 	}
-	token := authHeader[len(bearerPrefix):]
-	authToken, err := a.Auth.VerifyIDToken(r.Context(), token)
+	token := idToken[len(bearerPrefix):]
+	authToken, err := a.Auth.VerifyIDToken(ctx, token)
 	if err != nil {
 		return nil, fmt.Errorf("error verifying ID token: %v", err)
 	}
 	return (*AuthToken)(authToken), nil
-}
-
-func (r *AuthToken) Check(body rq.HasUserID) error {
-	if r.UID != body.GetUserID() {
-		return errors.New("user ID does not match")
-	}
-	return nil
 }

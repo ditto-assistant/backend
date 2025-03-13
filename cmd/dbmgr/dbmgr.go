@@ -9,11 +9,13 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	firebase "firebase.google.com/go/v4"
 	"github.com/ditto-assistant/backend/cfg/envs"
@@ -22,9 +24,8 @@ import (
 	"github.com/ditto-assistant/backend/pkg/services/db"
 	"github.com/ditto-assistant/backend/pkg/services/db/users"
 	"github.com/ditto-assistant/backend/pkg/services/llm"
+	"github.com/ditto-assistant/backend/pkg/services/llm/googai"
 	"github.com/ditto-assistant/backend/pkg/utils/numfmt"
-	"github.com/firebase/genkit/go/ai"
-	"github.com/firebase/genkit/go/plugins/vertexai"
 	_ "github.com/tursodatabase/go-libsql"
 	"golang.org/x/sync/errgroup"
 )
@@ -53,8 +54,20 @@ func main() {
 	)
 	var shutdown sync.WaitGroup
 	defer shutdown.Wait()
+	// Create a context that will be cancelled on SIGINT or SIGTERM
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-sigChan
+		slog.Info("Received signal, initiating shutdown", "signal", sig)
+		cancel()
+	}()
+	defer func() {
+		signal.Stop(sigChan)
+		cancel()
+	}()
+
 	globalFlags := flag.NewFlagSet("global", flag.ExitOnError)
 	logLevelFlag := globalFlags.String("log", "info", "log level")
 	envFlag := globalFlags.String("env", envs.EnvLocal.String(), "ditto environment")
@@ -86,6 +99,7 @@ func main() {
 	var version string
 	var userBalance int64
 	var firebaseFlags fireditto.Command
+	var force bool
 	switch subcommand {
 	case "migrate":
 		mode = ModeMigrate
@@ -108,6 +122,7 @@ func main() {
 		ingestFlags := flag.NewFlagSet("ingest", flag.ExitOnError)
 		ingestFlags.StringVar(&folder, "folder", "cmd/dbmgr/tool-examples", "folder to ingest")
 		ingestFlags.BoolVar(&dryRun, "dry-run", false, "dry run")
+		ingestFlags.BoolVar(&force, "force", false, "force embedding even if the version is the same")
 		ingestFlags.Parse(globalFlags.Args()[1:])
 
 	case "search":
@@ -125,10 +140,13 @@ func main() {
 		slog.Debug("search mode", "query", query, "env", dittoEnv)
 
 	case "firebase":
-		mode = ModeFirebase
+		if err := firebaseFlags.Init(); err != nil {
+			log.Fatalf("firebase command init: %s", err)
+		}
 		if err := firebaseFlags.Parse(globalFlags.Args()[1:]); err != nil {
 			log.Fatalf("invalid firebase flags: %s", err)
 		}
+		mode = ModeFirebase
 
 	case "sync":
 		if globalFlags.NArg() < 2 {
@@ -191,7 +209,7 @@ func main() {
 			log.Fatalf("failed to rollback database: %s", err)
 		}
 	case ModeIngest:
-		if err := ingestPromptExamples(ctx, folder, dryRun); err != nil {
+		if err := ingestPromptExamples(ctx, folder, dryRun, force); err != nil {
 			log.Fatalf("failed to ingest prompt examples: %s", err)
 		}
 	case ModeSearch:
@@ -248,7 +266,7 @@ func syncBalance(ctx context.Context) error {
 		userID := doc.Ref.Parent.Parent.ID
 		newBalance := int64(userData.Balance * float64(count))
 		user := users.User{UID: userID, Balance: newBalance}
-		if err := user.InitBalance(ctx); err != nil {
+		if err := user.InitBalance(ctx, db.D); err != nil {
 			return fmt.Errorf("error initializing user: %w", err)
 		}
 		slog.Info("User balance synced",
@@ -273,33 +291,20 @@ func testSearch(ctx context.Context, query string) error {
 	if latestVersion < minVersion {
 		return fmt.Errorf("version %s is not applied, please apply at least version %s before searching", latestVersion, minVersion)
 	}
-	if err := vertexai.Init(ctx, &vertexai.Config{
-		ProjectID: "ditto-app-dev",
-		Location:  "us-central1",
-	}); err != nil {
-		return fmt.Errorf("error initializing vertexai: %w", err)
+
+	// Initialize Google AI client
+	googaiClient, err := googai.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("error initializing Google AI client: %w", err)
 	}
-	embedder := vertexai.Embedder(llm.ModelTextEmbedding004.String())
-	if embedder == nil {
-		return errors.New("embedder not found")
-	}
-	emQuery, err := embedder.Embed(ctx, &ai.EmbedRequest{
-		Documents: []*ai.Document{
-			{
-				Content: []*ai.Part{
-					{
-						Kind: ai.PartText,
-						Text: query,
-					},
-				},
-			},
-		},
-	})
+
+	// Generate embedding for the query
+	embedding, _, err := googaiClient.EmbedSingle(ctx, query, llm.ModelTextEmbedding004)
 	if err != nil {
 		return fmt.Errorf("error embedding query: %w", err)
 	}
-	em := llm.Embedding(emQuery.Embeddings[0].Embedding)
-	examples, err := db.SearchExamples(ctx, em)
+
+	examples, err := db.SearchExamples(ctx, embedding)
 	if err != nil {
 		return fmt.Errorf("error searching examples: %w", err)
 	}
@@ -314,8 +319,8 @@ func testSearch(ctx context.Context, query string) error {
 
 // - MARK: Ingest Examples
 
-func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error {
-	slog.Info("ingesting prompt examples", "folder", folder, "dry-run", dryRun)
+func ingestPromptExamples(ctx context.Context, folder string, dryRun, forceEmbed bool) error {
+	slog.Info("ingesting prompt examples", "folder", folder, "dry-run", dryRun, "force-embed", forceEmbed)
 	minVersion := "v0.0.1"
 	latestVersion, err := getLatestVersion(ctx)
 	if err != nil {
@@ -324,12 +329,13 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 	if latestVersion < minVersion {
 		return fmt.Errorf("version %s is not applied, please apply at least version %s before embedding", latestVersion, minVersion)
 	}
-	if err := vertexai.Init(ctx, &vertexai.Config{
-		ProjectID: "ditto-app-dev",
-		Location:  "us-central1",
-	}); err != nil {
-		return fmt.Errorf("error initializing vertexai: %w", err)
+
+	// Initialize Google AI client
+	googaiClient, err := googai.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("error initializing Google AI client: %w", err)
 	}
+
 	files, err := filepath.Glob(filepath.Join(folder, "*.json"))
 	if err != nil {
 		return fmt.Errorf("error reading folder: %w", err)
@@ -352,14 +358,11 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 		return nil
 	}
 
-	embedder := vertexai.Embedder(llm.ModelTextEmbedding004.String())
-	if embedder == nil {
-		return errors.New("embedder not found")
-	}
 	group, embedCtx := errgroup.WithContext(ctx)
 	for _, tool := range fileSlice {
+		tool := tool // capture for goroutine
 		group.Go(func() error {
-			if err := tool.Embed(embedCtx, embedder); err != nil {
+			if err := tool.Embed(embedCtx, googaiClient); err != nil {
 				return fmt.Errorf("error embedding tool: %w", err)
 			}
 			return nil
@@ -381,6 +384,61 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 		err := tx.QueryRowContext(ctx, "SELECT id FROM services WHERE name = ?", tool.ServiceName).Scan(&serviceID)
 		if err != nil {
 			return fmt.Errorf("error getting service ID for %s: %w", tool.ServiceName, err)
+		}
+
+		// Check if the tool already exists
+		type existingTool struct {
+			id      int64
+			version string
+		}
+		var existingTools []existingTool
+		rows, err := tx.QueryContext(ctx, "SELECT id, version FROM tools WHERE name = ?", tool.Name)
+		if err != nil {
+			return fmt.Errorf("error checking if tool exists: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			var version string
+			if err := rows.Scan(&id, &version); err != nil {
+				rows.Close()
+				return fmt.Errorf("error scanning tool row: %w", err)
+			}
+			existingTools = append(existingTools, existingTool{id: id, version: version})
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("error iterating tool rows: %w", err)
+		}
+
+		// Skip if same version exists and force flag is not set
+		if !forceEmbed {
+			sameVersionExists := false
+			for _, existingTool := range existingTools {
+				if existingTool.version == tool.Version {
+					sameVersionExists = true
+					break
+				}
+			}
+			if sameVersionExists {
+				slog.Info("Skipping tool with same version", "tool", tool.Name, "version", tool.Version)
+				continue
+			}
+		}
+
+		// Delete existing tools with the same name (they must have different versions)
+		for _, existingTool := range existingTools {
+			// Delete examples first to maintain referential integrity
+			_, err := tx.ExecContext(ctx, "DELETE FROM examples WHERE tool_id = ?", existingTool.id)
+			if err != nil {
+				return fmt.Errorf("error deleting examples for tool %s: %w", tool.Name, err)
+			}
+
+			// Then delete the tool
+			_, err = tx.ExecContext(ctx, "DELETE FROM tools WHERE id = ?", existingTool.id)
+			if err != nil {
+				return fmt.Errorf("error deleting tool %s: %w", tool.Name, err)
+			}
+			slog.Info("Deleted existing tool", "tool", tool.Name, "id", existingTool.id, "version", existingTool.version)
 		}
 
 		// Insert into tools table
@@ -408,7 +466,7 @@ func ingestPromptExamples(ctx context.Context, folder string, dryRun bool) error
 			}
 		}
 
-		slog.Info("Inserted tool and examples", "tool", tool.Name, "exampleCount", len(tool.Examples))
+		slog.Info("Inserted tool and examples", "tool", tool.Name, "version", tool.Version, "exampleCount", len(tool.Examples))
 	}
 
 	// Commit the transaction
@@ -426,47 +484,44 @@ type ToolExamples struct {
 }
 
 // Embed embeds all the examples in the tool example.
-func (te ToolExamples) Embed(ctx context.Context, embedder ai.Embedder) error {
-	docs := make([]*ai.Document, 0, len(te.Examples)*2)
-	for _, example := range te.Examples {
-		// Embed the prompt
-		docs = append(docs, &ai.Document{
-			Content: []*ai.Part{
-				{
-					Kind: ai.PartText,
-					Text: example.Prompt,
-				},
-			},
-			Metadata: map[string]any{
-				"tool_name":   te.Name,
-				"description": te.Description,
-			},
-		})
-		// Embed the prompt and response together
-		docs = append(docs, &ai.Document{
-			Content: []*ai.Part{
-				{
-					Kind: ai.PartText,
-					Text: example.Prompt,
-				},
-				{
-					Kind: ai.PartText,
-					Text: example.Response,
-				},
-			},
-			Metadata: map[string]any{
-				"tool_name":   te.Name,
-				"description": te.Description,
-			},
-		})
-	}
-	rs, err := embedder.Embed(ctx, &ai.EmbedRequest{Documents: docs})
-	if err != nil {
-		return fmt.Errorf("error embedding: %w", err)
-	}
-	for i := range te.Examples {
-		te.Examples[i].EmPrompt = rs.Embeddings[i*2].Embedding
-		te.Examples[i].EmPromptResp = rs.Embeddings[i*2+1].Embedding
+func (te ToolExamples) Embed(ctx context.Context, client *googai.Client) error {
+	// Process examples in batches
+	batchSize := 10 // Process 10 examples at a time
+	for i := 0; i < len(te.Examples); i += batchSize {
+		end := i + batchSize
+		if end > len(te.Examples) {
+			end = len(te.Examples)
+		}
+		// Prepare batch of prompts
+		promptDocs := make([]string, end-i)
+		promptRespDocs := make([]string, end-i)
+		for j := i; j < end; j++ {
+			promptDocs[j-i] = te.Examples[j].Prompt
+			promptRespDocs[j-i] = te.Examples[j].Prompt + " " + te.Examples[j].Response
+		}
+		// Get embeddings for prompts
+		var promptEmbeddings googai.EmbedResponse
+		req := &googai.EmbedRequest{
+			Documents: promptDocs,
+			Model:     llm.ModelTextEmbedding005,
+		}
+		err := client.Embed(ctx, req, &promptEmbeddings)
+		if err != nil {
+			return fmt.Errorf("error embedding prompts: %w", err)
+		}
+		// Get embeddings for prompt+response combinations
+		var responseEmbeddings googai.EmbedResponse
+		req.Documents = promptRespDocs
+		err = client.Embed(ctx, req, &responseEmbeddings)
+		if err != nil {
+			return fmt.Errorf("error embedding prompt+responses: %w", err)
+		}
+
+		// Store embeddings in examples
+		for j := 0; j < end-i; j++ {
+			te.Examples[i+j].EmPrompt = promptEmbeddings.Embeddings[j]
+			te.Examples[i+j].EmPromptResp = responseEmbeddings.Embeddings[j]
+		}
 	}
 	return nil
 }

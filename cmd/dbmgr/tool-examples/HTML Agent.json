@@ -1,6 +1,6 @@
 {
   "name": "HTML Agent",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Examples of user prompts that require the HTML agent.",
   "service_name": "claude-3-5-sonnet",
   "examples": [
@@ -55,6 +55,46 @@
     {
       "prompt": "Current Script: Really Cool Game\n![https://cool-game-image-uri.com/image.jpg](https://cool-game-image-uri.com/image.jpg) Can you use this image as the main chatacter sprite?",
       "response": "<HTML_SCRIPT> Use the image as the main character sprite in the game. Make sure the sprite is animated and interacts with the game environment. Image: ![https://cool-game-image-uri.com/image.jpg](https://cool-game-image-uri.com/image.jpg)"
+    },
+    {
+      "prompt": "I need a personal portfolio website for my job search as a graphic designer",
+      "response": "<HTML_SCRIPT> Create a professional portfolio website for a graphic designer. It should showcase the designer's work in a visually appealing gallery, include an about section, contact information, and resume/CV. The site should have a modern, sleek design with smooth animations and be responsive across all devices."
+    },
+    {
+      "prompt": "Create a recipe book app where I can save and organize my favorite recipes",
+      "response": "<HTML_SCRIPT> Create a web app for saving and organizing recipes. It should allow users to create, edit, and categorize recipes. Include features like search functionality, ingredient lists, preparation steps, cooking time, and the ability to scale recipes. Add a feature to create meal plans and shopping lists based on selected recipes."
+    },
+    {
+      "prompt": "Current Script: Recipe Book App\nCan you add a feature to share recipes with friends via email?",
+      "response": "<HTML_SCRIPT> Add a sharing feature to the recipe app that allows users to share recipes with friends via email. Include options to customize the message, select multiple recipes to share, and preview how the shared recipe will look. Make sure the feature is intuitive and easy to use."
+    },
+    {
+      "prompt": "I want an interactive map app that shows hiking trails near me",
+      "response": "<HTML_SCRIPT> Create a web app that displays hiking trails on an interactive map. It should use geolocation to show trails near the user's location, provide details about trail difficulty, length, elevation gain, and user reviews. Include features to filter trails by difficulty, length, and rating, and allow users to save favorite trails."
+    },
+    {
+      "prompt": "Current Script: Hiking Trails App\nThe map isn't loading correctly on Firefox. Can you fix it?",
+      "response": "<HTML_SCRIPT> Fix the compatibility issue that prevents the map from loading correctly in Firefox. Ensure that the application works consistently across all major browsers including Chrome, Firefox, Safari, and Edge. Test and optimize the map functionality specifically for Firefox."
+    },
+    {
+      "prompt": "Build a simple music player that can play local audio files",
+      "response": "<HTML_SCRIPT> Create a web-based music player that can play local audio files. It should have features for play, pause, skip, and volume control. Include a playlist functionality where users can organize their music, display album art and track information, and implement a responsive design that works well on desktop and mobile devices."
+    },
+    {
+      "prompt": "Current Script: Music Player App\nCan we add a visualizer that responds to the music?",
+      "response": "<HTML_SCRIPT> Add an audio visualizer to the music player that responds to the music being played. The visualizer should analyze the audio frequencies and display dynamic, animated visual effects that sync with the beat and tone of the music. Allow users to choose from different visualization styles and customize colors."
+    },
+    {
+      "prompt": "Make a simple e-commerce website for a small clothing brand",
+      "response": "<HTML_SCRIPT> Create an e-commerce website for a small clothing brand. Include a product catalog with filtering options, individual product pages with details and images, a shopping cart, and a checkout process. Make the site responsive, visually appealing, and aligned with modern e-commerce best practices. Include features for product reviews, size guides, and related product suggestions."
+    },
+    {
+      "prompt": "Current Script: E-commerce Website\nI need to add a discount code feature at checkout",
+      "response": "<HTML_SCRIPT> Add a discount code feature to the checkout process of the e-commerce website. Allow users to enter and apply discount codes that reduce the total price. Implement validation for discount codes, show clear feedback when codes are applied or invalid, and update the order total in real-time when discounts are applied."
+    },
+    {
+      "prompt": "Create a countdown timer app for my workout routines",
+      "response": "<HTML_SCRIPT> Create a workout countdown timer app. It should allow users to set custom timers for different exercises, create and save workout routines with multiple timers, and include features like rest periods between exercises. Add audio alerts for timer completion and a visually clear interface that's easy to read during workouts."
     }
   ]
 }

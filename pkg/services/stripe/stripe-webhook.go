@@ -113,7 +113,7 @@ func (cl *Client) HandleWebhook(w http.ResponseWriter, r *http.Request) {
 			Cents:     paymentIntent.Amount,
 			Tokens:    tokens,
 		}
-		err = p.Insert(uid)
+		err = p.Insert(r.Context(), db.D, uid)
 		if err != nil {
 			slog.Error("error inserting purchase", "error", err)
 			http.Error(w, err.Error(), http.StatusInternalServerError)

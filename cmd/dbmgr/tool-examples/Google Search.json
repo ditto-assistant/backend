@@ -1,6 +1,6 @@
 {
   "name": "Google Search",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Examples of user prompts that require the Google Search tool.",
   "service_name": "google-search",
   "examples": [
@@ -163,6 +163,58 @@
     {
       "prompt": "Can you look up the endangered species in the Amazon rainforest?",
       "response": "<GOOGLE_SEARCH> Amazon rainforest endangered species list"
+    },
+    {
+      "prompt": "What programming language is best for machine learning?",
+      "response": "<GOOGLE_SEARCH> best programming languages for machine learning 2024"
+    },
+    {
+      "prompt": "How do I remove red wine stains from carpet?",
+      "response": "<GOOGLE_SEARCH> how to remove red wine stains from carpet"
+    },
+    {
+      "prompt": "What's the calorie count in an avocado?",
+      "response": "<GOOGLE_SEARCH> avocado nutrition calories"
+    },
+    {
+      "prompt": "Find the most fuel-efficient SUVs of 2024.",
+      "response": "<GOOGLE_SEARCH> most fuel-efficient SUVs 2024"
+    },
+    {
+      "prompt": "What are the symptoms of vitamin D deficiency?",
+      "response": "<GOOGLE_SEARCH> vitamin D deficiency symptoms"
+    },
+    {
+      "prompt": "How do I renew my driver's license online?",
+      "response": "<GOOGLE_SEARCH> how to renew driver's license online"
+    },
+    {
+      "prompt": "What are the rules for carry-on luggage with Delta Airlines?",
+      "response": "<GOOGLE_SEARCH> Delta Airlines carry-on luggage rules 2024"
+    },
+    {
+      "prompt": "How much does it cost to adopt a dog from a shelter?",
+      "response": "<GOOGLE_SEARCH> average cost to adopt dog from shelter"
+    },
+    {
+      "prompt": "What are the best hikes near Portland, Oregon?",
+      "response": "<GOOGLE_SEARCH> best hiking trails near Portland Oregon"
+    },
+    {
+      "prompt": "How do I fix a leaky faucet?",
+      "response": "<GOOGLE_SEARCH> how to fix leaky faucet DIY"
+    },
+    {
+      "prompt": "What are the latest AI breakthroughs?",
+      "response": "<GOOGLE_SEARCH> latest artificial intelligence breakthroughs 2024"
+    },
+    {
+      "prompt": "How much caffeine is in a cup of green tea?",
+      "response": "<GOOGLE_SEARCH> caffeine content green tea vs coffee"
+    },
+    {
+      "prompt": "What are the top-rated electric cars for 2024?",
+      "response": "<GOOGLE_SEARCH> top-rated electric cars 2024 comparison"
     }
   ]
 }
