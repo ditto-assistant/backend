@@ -32,6 +32,7 @@ import (
 	"github.com/ditto-assistant/backend/pkg/services/search/brave"
 	"github.com/ditto-assistant/backend/pkg/services/search/google"
 	"github.com/ditto-assistant/backend/pkg/services/stripe"
+	"github.com/ditto-assistant/backend/pkg/web"
 	"github.com/ditto-assistant/backend/types/rq"
 	"github.com/ditto-assistant/backend/types/ty"
 )
@@ -69,6 +70,9 @@ func main() {
 	stripe.NewClient(coreSvc.Secr, coreSvc.Auth).Routes(mux)
 	apiv2.NewService(coreSvc, sdCtx).Routes(mux)
 	cerebrasClient := cerebras.NewService(&sdCtx, coreSvc.Secr)
+
+	webClient := web.NewClient(coreSvc)
+	webClient.Routes(mux)
 
 	// - MARK: prompt
 	mux.HandleFunc("POST /v1/prompt", func(w http.ResponseWriter, r *http.Request) {
