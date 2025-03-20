@@ -1,6 +1,6 @@
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 
-@local: generate
+@local: generate compress-assets
     echo "Running on http://localhost:3400"
     go run main.go
 
@@ -8,10 +8,69 @@ generate:
     templ fmt .
     templ generate
 
+# Pre-compress static assets for optimal serving
+compress-assets:
+    #!/usr/bin/env bash
+    echo "Compressing static assets..."
+    # Compress assets in assets directory
+    find pkg/web/static/assets -type f \
+        -not -path "*/\.*" \
+        -not -name "*.gz" \
+        -not -name "*.png" \
+        -not -name "*.jpg" \
+        -not -name "*.jpeg" \
+        -not -name "*.webp" \
+        -not -name "*.ico" \
+        | while read file; do
+            # Check if compressed version already exists or is newer
+            if [ -f "$file.gz" ] && [ "$file.gz" -nt "$file" ]; then
+                continue
+            fi
+            echo "Compressing $file"
+            gzip -9 -c "$file" > "$file.gz"
+        done
+    
+    # Also compress HTML files in the root static directory
+    echo "Compressing HTML files..."
+    find pkg/web/static -type f \
+        -name "*.html" \
+        -not -path "*/assets/*" \
+        | while read file; do
+            # Check if compressed version already exists or is newer
+            if [ -f "$file.gz" ] && [ "$file.gz" -nt "$file" ]; then
+                continue
+            fi
+            echo "Compressing $file"
+            gzip -9 -c "$file" > "$file.gz"
+        done
+    echo "Compression complete!"
+
+# Upload static assets to Backblaze B2
+upload-assets *ARGS:
+    #!/usr/bin/env bash
+    echo "Building asset uploader..."
+    go build -o bin/assetupload ./cmd/assetupload
+    echo "Uploading assets to Backblaze B2..."
+    ./bin/assetupload {{ARGS}}
+
+# Upload assets with a dry run first
+upload-assets-safe *ARGS:
+    #!/usr/bin/env bash
+    echo "Building asset uploader..."
+    go build -o bin/assetupload ./cmd/assetupload
+    echo "Uploading assets to Backblaze B2..."
+    ./bin/assetupload --dry-run {{ARGS}}
+    read -p "Continue with upload? (y/n) " CONTINUE
+    if [ "$CONTINUE" = "y" ]; then
+        just upload-assets {{ARGS}}
+    else
+        echo "Upload canceled"
+    fi
+
 staging:
     DITTO_ENV=staging go run main.go
 
-deploy:
+deploy: generate compress-assets
 	gcloud run deploy --port 3400 \
 		--set-env-vars GCLOUD_PROJECT=ditto-app-dev \
 		--set-env-vars GCLOUD_LOCATION=us-central1 \
@@ -29,7 +88,7 @@ install-dbmgr:
 search *ARGS:
 	go run cmd/dbmgr/dbmgr.go search {{ARGS}}
 
-build:
+build: generate compress-assets
 	docker build -t ditto-backend .
 
 push-tag-number:
