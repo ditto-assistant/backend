@@ -133,7 +133,7 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2, shortTermM
 				_, seen := seenMemories[doc.Ref.ID]
 				mutex.RUnlock()
 				if seen {
-					slog.Debug("skipping duplicate memory from target vector search", "id", doc.Ref.ID)
+					// slog.Debug("skipping duplicate memory from target vector search", "id", doc.Ref.ID)
 					continue
 				}
 				mem.ID = doc.Ref.ID
@@ -173,7 +173,7 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2, shortTermM
 						_, seen := seenMemories[doc.Ref.ID]
 						mutex.RUnlock()
 						if seen {
-							slog.Debug("skipping duplicate memory from combined vector search", "id", doc.Ref.ID)
+							// slog.Debug("skipping duplicate memory from combined vector search", "id", doc.Ref.ID)
 							continue
 						}
 						var mem rp.Memory
@@ -243,7 +243,7 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2, shortTermM
 			_, seen := seenMemories[doc.Ref.ID]
 			mutex.RUnlock()
 			if seen {
-				slog.Debug("skipping duplicate memory", "id", doc.Ref.ID, "depth", depth)
+				// slog.Debug("skipping duplicate memory", "id", doc.Ref.ID, "depth", depth)
 				continue
 			}
 			if len(children) >= nodeCount {
@@ -256,7 +256,7 @@ func (cl *Client) getLong(ctx context.Context, req *rq.GetMemoriesV2, shortTermM
 			child.ID = doc.Ref.ID
 			child.Depth = depth
 			child.FormatResponse()
-			slog.Debug("adding child memory", "id", child.ID, "depth", depth, "distance", child.VectorDistance)
+			// slog.Debug("adding child memory", "id", child.ID, "depth", depth, "distance", child.VectorDistance)
 			if req.StripImages {
 				child.StripImages()
 			} else {

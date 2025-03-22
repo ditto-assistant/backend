@@ -25,6 +25,8 @@ const (
 	ModelMistralLarge ServiceName = "mistral-large"
 	// ModelLlama32 is Meta's Llama 3.2 model.
 	ModelLlama32 ServiceName = "llama-3-2"
+	// ModelLlama33_70bInstruct is Meta's Llama 3.3 70B Instruct model.
+	ModelLlama33_70bInstruct ServiceName = "meta/llama-3.3-70b-instruct-maas"
 	// ModelFlux11ProUltra is BFL's FLUX 1.1 Pro Ultra model
 	ModelFlux11ProUltra ServiceName = "flux-1-1-pro-ultra"
 	// ModelFlux11Pro is BFL's FLUX 1.1 Pro model
@@ -102,3 +104,7 @@ const (
 	ServiceTypeImageGen  ServiceType = "image_generation"
 	ServiceTypeSearch    ServiceType = "search"
 )
+
+func (s ServiceType) String() string {
+	return string(s)
+}

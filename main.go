@@ -101,6 +101,12 @@ func main() {
 			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 			return
 		}
+		bod.Model, err = llama.ModelCompat(bod.Model, bod.ImageURL)
+		if err != nil {
+			slog.Error("invalid llama model", "error", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 
 		var rsp llm.StreamResponse
 		switch bod.Model {
@@ -138,11 +144,10 @@ func main() {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-		case llm.ModelLlama32:
-			m := llama.ModelLlama32
-			err = m.Prompt(ctx, bod, &rsp)
+		case llm.ModelLlama33_70bInstruct:
+			err = llama.Prompt(ctx, bod, &rsp)
 			if err != nil {
-				slog.Error("failed to prompt "+m.PrettyStr(), "error", err)
+				slog.Error("failed to prompt "+bod.Model.String(), "error", err)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
