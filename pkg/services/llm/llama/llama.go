@@ -90,6 +90,25 @@ func init() {
 	requestURL = fmt.Sprintf(baseURL, region, envs.GCLOUD_PROJECT, region)
 }
 
+func ModelCompat(model llm.ServiceName, imageURL string) (llm.ServiceName, error) {
+	switch model {
+	case llm.ModelLlama32:
+		if imageURL != "" {
+			// Allow the user to use gpt-4o-mini for image understanding for now, as llama32 is broken
+			return llm.ModelGPT4oMini, nil
+		} else {
+			return llm.ModelLlama33_70bInstruct, nil // free text only model
+		}
+	case llm.ModelLlama33_70bInstruct:
+		if imageURL != "" {
+			return "", errors.New("llama 3.3 70b instruct does not support images")
+		}
+		return model, nil
+	default:
+		return model, nil
+	}
+}
+
 func Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) error {
 	if prompt.Model == llm.ModelLlama33_70bInstruct && prompt.ImageURL != "" {
 		return errors.New("llama 3.3 70b instruct does not support images")

@@ -101,13 +101,11 @@ func main() {
 			http.Error(w, fmt.Sprintf("user balance is: %d", user.Balance), http.StatusPaymentRequired)
 			return
 		}
-		if bod.Model == llm.ModelLlama32 {
-			if bod.ImageURL != "" {
-				// Allow the user to use gpt-4o-mini for image understanding for now, as llama32 is broken
-				bod.Model = llm.ModelGPT4oMini
-			} else {
-				bod.Model = llm.ModelLlama33_70bInstruct // free text only model
-			}
+		bod.Model, err = llama.ModelCompat(bod.Model, bod.ImageURL)
+		if err != nil {
+			slog.Error("invalid llama model", "error", err)
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 
 		var rsp llm.StreamResponse
@@ -146,7 +144,7 @@ func main() {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-		case llm.ModelLlama32, llm.ModelLlama33_70bInstruct:
+		case llm.ModelLlama33_70bInstruct:
 			err = llama.Prompt(ctx, bod, &rsp)
 			if err != nil {
 				slog.Error("failed to prompt "+bod.Model.String(), "error", err)
