@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -89,7 +90,10 @@ func init() {
 	requestURL = fmt.Sprintf(baseURL, region, envs.GCLOUD_PROJECT, region)
 }
 
-func (m Model) Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) error {
+func Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamResponse) error {
+	if prompt.Model == llm.ModelLlama33_70bInstruct && prompt.ImageURL != "" {
+		return errors.New("llama 3.3 70b instruct does not support images")
+	}
 	messages := make([]Message, 0, 2)
 	if prompt.SystemPrompt != "" {
 		// Llama 3.2 does not support system prompts if there is an image.
@@ -139,7 +143,7 @@ func (m Model) Prompt(ctx context.Context, prompt rq.PromptV1, rsp *llm.StreamRe
 		Content: contents,
 	})
 	req := Request{
-		Model:       "meta/llama-3.2-90b-vision-instruct-maas",
+		Model:       "meta/llama-3.3-70b-instruct-maas",
 		Messages:    messages,
 		Stream:      true,
 		MaxTokens:   8192,
